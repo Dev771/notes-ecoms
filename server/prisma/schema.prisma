@@ -162,6 +162,7 @@ model Product {
 
   @@unique([tenantId, slug])
   @@index([tenantId, status, classLevel, subject])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_title_trgm_idx")
 }
 
 model BundleItem {
@@ -183,6 +184,7 @@ model ProductAlias {
   alias     String
 
   @@index([tenantId])
+  @@index([alias(ops: raw("gin_trgm_ops"))], type: Gin, map: "ProductAlias_alias_trgm_idx")
 }
 
 model Order {
