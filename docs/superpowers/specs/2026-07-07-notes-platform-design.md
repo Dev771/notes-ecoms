@@ -26,12 +26,14 @@ One **Next.js 15** app (App Router, TypeScript, Tailwind CSS): storefront, stude
 | Database | Supabase Postgres + **Prisma** | Free 500MB; `pg_trgm` extension powers fuzzy search |
 | Auth | Supabase Auth | Google OAuth (required for Drive delivery anyway) |
 | File storage | Supabase Storage | Cover images + watermarked previews, auto-generated from the note's own Drive PDF (§4) |
-| Payments | Razorpay, per-tenant keys | UPI/cards; each client's money settles to their own Razorpay account |
+| Payments | Razorpay (default) behind a thin `PaymentProvider` interface | Checkout in UPI QR/intent mode; per-tenant keys, money settles to the client's account; optional manual-UPI bridge mode (§5) |
 | Email | Resend + React Email | 3k/month free; delivery emails, enquiry notifications, dead-letter alerts |
 | Drive automation | `googleapis` SDK + one platform service account | See §4 |
 | Hosting | Vercel Hobby while building → Vercel Pro (~₹1,700/mo) or Cloudflare via OpenNext at commercial launch | **Vercel Hobby formally disallows commercial use** — flagged, not ignorable |
 
 No Redis, no queue service, no search service. Reliability comes from a DB-backed outbox (§5), search from Postgres (§7).
+
+**Why Postgres, not MongoDB or MySQL.** The domain is relational and transactional: orders ↔ items ↔ products ↔ entitlements ↔ users, money math, hard uniqueness guarantees (one entitlement per user+product, webhook event dedupe), multi-row transactions (mark paid + create jobs atomically), and admin analytics that are joins/aggregations. The search design additionally needs `pg_trgm` trigram similarity, which MySQL and vanilla MongoDB lack. Storage is a non-factor: PDFs live in Google Drive and images in Supabase Storage — the database holds only metadata (thousands of orders ≈ a few MB), and MongoDB Atlas's free tier (512MB) is the same size as Supabase's anyway.
 
 ## 3. Tenancy model
 
@@ -67,6 +69,10 @@ Embedding the paid file's own Drive preview iframe was rejected: the file is pri
 
 **PRD deviation (deliberate):** guest checkout is dropped. **Google sign-in is required before payment** (one tap). A typed email invites typos and non-Google addresses — payments that can't be fulfilled. Sign-in guarantees a valid Google identity and gives every buyer a dashboard.
 
+**Payment modes.** The pipeline fires on "order marked paid" regardless of how it got marked, which allows two modes per tenant:
+- **Gateway mode (default):** Razorpay Standard Checkout — for UPI buyers this is a QR scan (desktop) or UPI-app intent (mobile); the `payment.captured` webhook confirms automatically, so delivery is instant. Requires the client's one-time KYC (any RBI-licensed aggregator requires this; automated payment confirmation without KYC does not legitimately exist). Gateway calls sit behind a thin `PaymentProvider` interface so Cashfree/PhonePe/etc. can slot in per tenant later.
+- **Manual UPI mode (pre-KYC launch bridge, tenant setting):** checkout shows the tenant's static UPI QR plus the order reference; the buyer submits their UPI transaction (UTR) number; the order sits in `pending_verification`; the admin cross-checks the bank app and clicks Confirm, which fires the identical fulfillment pipeline. Trade-offs accepted: delivery is not instant, fake references must be caught by the admin, and per-order manual work returns. Exists only to launch while KYC completes, then gets switched off.
+
 Pipeline:
 
 ```
@@ -95,7 +101,7 @@ All tables carry `tenant_id`. PKs/timestamps omitted.
 | `products` | `type` = `note` \| `bundle`; class, subject, chapter number, official NCERT title, slug, price, description, `drive_file_id`, cover/preview paths, status |
 | `bundle_items` | Bundle product → child note products; bundle price on the bundle row |
 | `product_aliases` | Admin-editable search aliases ("Carbon", "Ch 4 Sci", …) |
-| `orders` / `order_items` | Buyer, totals, Razorpay order/payment IDs, status; line items snapshot prices |
+| `orders` / `order_items` | Buyer, totals, payment mode (gateway/manual), gateway order/payment IDs or buyer-submitted UTR, status incl. `pending_verification`; line items snapshot prices |
 | `entitlements` | Access ledger: user ↔ note product, Drive permission ID, granted/revoked. Unique (user, product) |
 | `fulfillment_jobs` | Outbox: type (Drive grant, delivery email, preview generation), payload, attempts, next retry, last error, dead-letter flag |
 | `enquiries` | Request form: type (update / new topic / issue), message, contact, admin status |
@@ -120,7 +126,7 @@ Mobile-first throughout (80%+ mobile traffic; sub-2s PLP budget).
 - **Home:** hero (copy + institute/influencer image, "Shop Class 10" CTA), slim trust-stats bar, Class 9/10 capsule toggles over product grid, Instagram Reels carousel (lazy lite-embeds to protect load time), bundles strip, footer with policy pages (required for Razorpay approval).
 - **PLP:** search bar, capsule filters, sort.
 - **PDP:** watermarked preview gallery (auto-generated from the note's PDF, §4), metadata, bundle upsell widget, sticky mobile Buy button.
-- **Checkout:** cart → Google sign-in → Razorpay modal → success page with live order status.
+- **Checkout:** cart → Google sign-in → Razorpay checkout (UPI QR/intent) *or* manual-UPI screen (§5) → success page with live order status.
 - **Student dashboard:** My Notes grid (opens Drive in new tab), order history + invoice details, profile.
 - **About + enquiry form**, **blog** (list/post, embeddable product cards), **policy pages**.
 
@@ -153,3 +159,4 @@ Coupons/affiliate codes, wishlist, ratings/reviews, per-buyer forensic watermark
 | Client moves/deletes Drive files | Verify-access button, dead-letter alerts, product-level re-link |
 | Screenshot piracy | Expectation set with client; watermarked previews; forensic watermarking later |
 | Supabase free-tier pause (7-day inactivity) | Non-issue once live traffic exists; cron pings also keep it warm |
+| Client KYC delays gateway go-live | Manual UPI mode lets the store launch pre-KYC; switch to gateway mode when approved |
