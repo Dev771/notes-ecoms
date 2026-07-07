@@ -10,7 +10,7 @@ type Me = { id: string; email: string; name: string | null; role: string };
 
 export function SiteHeader({ tenantName }: { tenantName: string }) {
   const [me, setMe] = useState<Me | null>(null);
-  const email = me?.name ?? me?.email ?? null;
+  const displayName = me?.name ?? me?.email ?? null;
 
   useEffect(() => {
     if (!getAuthToken()) return;
@@ -22,13 +22,17 @@ export function SiteHeader({ tenantName }: { tenantName: string }) {
   return (
     <header className="border-b">
       <div className="mx-auto flex max-w-6xl items-center justify-between p-4">
-        <Link href="/" className="text-lg font-bold" style={{ color: 'var(--brand-primary)' }}>
+        <Link
+          href="/"
+          className="text-lg font-bold"
+          style={{ color: 'var(--brand-primary)' }}
+        >
           {tenantName}
         </Link>
         <nav className="flex items-center gap-3">
-          {email ? (
+          {displayName ? (
             <>
-              <span className="text-sm text-gray-600">{email}</span>
+              <span className="text-sm text-gray-600">{displayName}</span>
               <SignOutButton />
             </>
           ) : (
@@ -37,5 +41,5 @@ export function SiteHeader({ tenantName }: { tenantName: string }) {
         </nav>
       </div>
     </header>
-  )
+  );
 }

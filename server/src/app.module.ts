@@ -1,7 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { TenantModule } from './tenant/tenant.module';
@@ -17,8 +15,8 @@ import { AuthModule } from './auth/auth.module';
     UsersModule,
     AuthModule,
   ],
-  controllers: [AppController, HealthController],
-  providers: [AppService],
+  controllers: [HealthController],
+  providers: [],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

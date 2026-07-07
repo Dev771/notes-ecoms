@@ -36,10 +36,12 @@ describe('auth tokens', () => {
     const token = await signState({
       tenantId: 't1',
       returnTo: 'http://localhost:3000/auth/callback',
+      nonce: 'n1',
     });
     await expect(verifyState(token)).resolves.toEqual({
       tenantId: 't1',
       returnTo: 'http://localhost:3000/auth/callback',
+      nonce: 'n1',
     });
   });
 
@@ -56,7 +58,11 @@ describe('auth tokens', () => {
   });
 
   it('rejects a state token passed as an auth token', async () => {
-    const state = await signState({ tenantId: 't1', returnTo: 'http://x.com' });
+    const state = await signState({
+      tenantId: 't1',
+      returnTo: 'http://x.com',
+      nonce: 'n1',
+    });
     await expect(verifyAuthToken(state)).rejects.toThrow(/malformed/i);
   });
 

@@ -61,7 +61,15 @@ async function main() {
   for (const n of notes) {
     const product = await prisma.product.upsert({
       where: { tenantId_slug: { tenantId: tenant.id, slug: n.slug } },
-      update: {},
+      // Rebuild aliases on every re-run so edits to the aliases list below
+      // actually apply to existing seeded rows (plain `update: {}` would
+      // silently keep whatever aliases were created on the first run).
+      update: {
+        aliases: {
+          deleteMany: {},
+          create: n.aliases.map((alias) => ({ alias, tenantId: tenant.id })),
+        },
+      },
       create: {
         tenantId: tenant.id,
         type: 'NOTE',

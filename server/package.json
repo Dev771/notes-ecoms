@@ -63,6 +63,9 @@
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
+  "overrides": {
+    "multer": "^2.2.0"
+  },
   "jest": {
     "moduleFileExtensions": [
       "js",

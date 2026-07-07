@@ -10,6 +10,7 @@ export type AuthTokenClaims = {
 export type StateClaims = {
   tenantId: string;
   returnTo: string;
+  nonce: string;
 };
 
 function secret(): Uint8Array {
@@ -63,9 +64,14 @@ export async function verifyState(token: string): Promise<StateClaims> {
   if (
     payload.kind !== 'state' ||
     typeof payload.tenantId !== 'string' ||
-    typeof payload.returnTo !== 'string'
+    typeof payload.returnTo !== 'string' ||
+    typeof payload.nonce !== 'string'
   ) {
     throw new Error('Malformed state token');
   }
-  return { tenantId: payload.tenantId, returnTo: payload.returnTo };
+  return {
+    tenantId: payload.tenantId,
+    returnTo: payload.returnTo,
+    nonce: payload.nonce,
+  };
 }

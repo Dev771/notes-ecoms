@@ -23,7 +23,7 @@ Decisions made during discovery:
 
 Two apps in one repo (`client/` + `server/`, plain npm, no workspace tooling — the same layout as the developer's other monorepos):
 
-- **`client/` — Next.js 16** (App Router, TypeScript, Tailwind CSS): storefront, student dashboard, admin panel UI. Holds no secrets and never touches the database; it talks to the API with a Supabase bearer token.
+- **`client/` — Next.js 16** (App Router, TypeScript, Tailwind CSS): storefront, student dashboard, admin panel UI. Holds no secrets and never touches the database; it talks to the API with a first-party JWT issued by the API.
 - **`server/` — NestJS 11** (TypeScript, Jest): all business logic — tenant resolution, catalog, search, orders, Razorpay webhooks, Google Drive grants, the outbox worker (`@nestjs/schedule` in-process cron), email. The only process that touches Postgres or holds credentials. Runs on :3001 in dev.
 
 | Concern | Service | Notes |
@@ -103,7 +103,7 @@ All tables carry `tenant_id`. PKs/timestamps omitted.
 | Table | Purpose |
 |---|---|
 | `tenants` | Client config (§3) |
-| `users` | Student profile linked to Supabase Auth ID; role `student`/`admin` |
+| `users` | Student profile linked to Google account ID; role `student`/`admin` |
 | `products` | `type` = `note` \| `bundle`; class, subject, chapter number, official NCERT title, slug, price, description, `drive_file_id`, cover/preview paths, status |
 | `bundle_items` | Bundle product → child note products; bundle price on the bundle row |
 | `product_aliases` | Admin-editable search aliases ("Carbon", "Ch 4 Sci", …) |

@@ -6,10 +6,15 @@ import { clearAuthToken } from '@/lib/auth-token';
 export function SignInButton() {
   const signIn = () => {
     const returnTo = `${window.location.origin}/auth/callback`;
-    window.location.assign(apiUrl(`/auth/google?returnTo=${encodeURIComponent(returnTo)}`));
+    window.location.assign(
+      apiUrl(`/auth/google?returnTo=${encodeURIComponent(returnTo)}`),
+    );
   };
   return (
-    <button onClick={signIn} className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white">
+    <button
+      onClick={signIn}
+      className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white"
+    >
       Sign in with Google
     </button>
   );

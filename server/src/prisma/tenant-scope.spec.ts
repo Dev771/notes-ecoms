@@ -90,4 +90,45 @@ describe('applyTenantScope', () => {
       expect(applyTenantScope(model, 'findMany', args, TID)).toEqual(args);
     }
   });
+
+  it('injects tenantId into updateManyAndReturn where', () => {
+    expect(
+      applyTenantScope(
+        'Product',
+        'updateManyAndReturn',
+        { where: { id: 'p1' }, data: { title: 'X' } },
+        TID,
+      ),
+    ).toEqual({
+      where: { id: 'p1', tenantId: TID },
+      data: { title: 'X' },
+    });
+  });
+
+  it('stamps every row in createManyAndReturn', () => {
+    expect(
+      applyTenantScope(
+        'Product',
+        'createManyAndReturn',
+        { data: [{ title: 'A' }, { title: 'B' }] },
+        TID,
+      ),
+    ).toEqual({
+      data: [
+        { title: 'A', tenantId: TID },
+        { title: 'B', tenantId: TID },
+      ],
+    });
+  });
+
+  it('throws on an unknown/unhandled operation for a non-exempt model', () => {
+    expect(() =>
+      applyTenantScope('Product', 'someFutureOp', { where: {} }, TID),
+    ).toThrow(/unhandled Prisma operation/);
+  });
+
+  it('lets exempt models through unknown operations untouched', () => {
+    const args = { where: { id: 'x' } };
+    expect(applyTenantScope('Tenant', 'someFutureOp', args, TID)).toEqual(args);
+  });
 });

@@ -6,7 +6,10 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
   const token = getAuthToken();
