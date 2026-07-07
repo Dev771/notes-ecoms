@@ -17,6 +17,7 @@ Decisions made during discovery:
 | Budget | ~Free until revenue | Free tiers throughout; only real cost is the domain |
 | Architecture | One shared multi-tenant platform | New client = config row + DNS, not a new deployment or codebase fork |
 | Backend split (revised 2026-07-07) | Dedicated NestJS API server + Next.js frontend, instead of Next.js route handlers | User decision: wants a standalone always-on backend. Buys simpler background workers and no serverless limits; accepts a second deployment and its hosting cost |
+| Auth ownership (revised 2026-07-08) | Backend-owned Google OAuth (Passport on NestJS) + first-party JWTs; Supabase Auth dropped | User decision: zero auth artifacts/keys in the browser. Supabase shrinks to Postgres hosting (+ Storage later) |
 
 ## 2. Stack
 
@@ -28,7 +29,7 @@ Two apps in one repo (`client/` + `server/`, plain npm, no workspace tooling —
 | Concern | Service | Notes |
 |---|---|---|
 | Database | Supabase Postgres + **Prisma** | Free 500MB; `pg_trgm` extension powers fuzzy search |
-| Auth | Supabase Auth | Google OAuth (required for Drive delivery anyway) |
+| Auth | NestJS Passport Google OAuth + first-party JWTs | API owns the whole flow: `/auth/google` → Google consent → `/auth/google/callback` → user provisioned server-side → signed JWT handed to the client. No auth keys in the browser. Google sign-in stays mandatory (Drive delivery) |
 | File storage | Supabase Storage | Cover images + watermarked previews, auto-generated from the note's own Drive PDF (§4) |
 | Payments | Razorpay (default) behind a thin `PaymentProvider` interface | Checkout in UPI QR/intent mode; per-tenant keys, money settles to the client's account; optional manual-UPI bridge mode (§5) |
 | Email | Resend + React Email | 3k/month free; delivery emails, enquiry notifications, dead-letter alerts |

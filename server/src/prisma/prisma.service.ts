@@ -26,8 +26,8 @@ export class PrismaService
       query: {
         $allModels: {
           $allOperations({ model, operation, args, query }) {
-            // Prisma's generic arg types can't express the injection; the pure
-            // function is unit-tested, so the cast is contained here.
+            // The pure, unit-tested applyTenantScope transforms args
+            // (injecting/stamping tenantId) before the query executes.
             return query(applyTenantScope(model, operation, args, tenantId));
           },
         },
@@ -35,6 +35,15 @@ export class PrismaService
     });
   }
 
+  /**
+   * Returns the memoized tenant-scoped client — the ONLY sanctioned handle
+   * for business queries.
+   *
+   * BOUNDARY WARNING: the extension intercepts model operations only.
+   * `$queryRaw` / `$executeRaw` are NOT scoped, and nested relational writes
+   * (e.g. `data: { relation: { create: {...} } }`) are NOT stamped — only
+   * top-level `where` / `data` / `create` are. Scope those manually.
+   */
   forTenant(tenantId: string) {
     let client = this.tenantClients.get(tenantId);
     if (!client) {

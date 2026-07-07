@@ -17,6 +17,20 @@ const WHERE_OPS = new Set([
 
 type Args = Record<string, unknown>;
 
+/**
+ * Injects/stamps `tenantId` into the args of a Prisma model operation.
+ * Exempt models (`Tenant`, `BundleItem`, `OrderItem`) pass through untouched.
+ *
+ * BOUNDARY WARNING — this scoping does NOT cover:
+ * - Raw SQL: `$queryRaw` / `$executeRaw` bypass model operations entirely and
+ *   are never intercepted. Raw queries must scope by tenant manually.
+ * - Nested relational writes: only the top-level `where` / `data` / `create`
+ *   are scoped. e.g. `data: { relation: { create: {...} } }` is untouched —
+ *   nested creates must carry `tenantId` explicitly.
+ *
+ * This is the platform's tenant-isolation mechanism; callers relying on it
+ * must keep these blind spots in mind.
+ */
 export function applyTenantScope(
   model: string,
   operation: string,
