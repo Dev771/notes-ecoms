@@ -18,19 +18,3 @@ export function mapAuthUser(authUser: AuthUserLike): {
     null;
   return { email: authUser.email.toLowerCase(), name };
 }
-
-export function payloadToAuthUser(
-  payload: Record<string, unknown>,
-): AuthUserLike {
-  if (typeof payload.sub !== 'string' || !payload.sub) {
-    throw new Error('JWT payload has no sub claim');
-  }
-  return {
-    id: payload.sub,
-    email: typeof payload.email === 'string' ? payload.email : null,
-    user_metadata:
-      payload.user_metadata && typeof payload.user_metadata === 'object'
-        ? (payload.user_metadata as Record<string, unknown>)
-        : undefined,
-  };
-}

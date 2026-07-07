@@ -1,4 +1,4 @@
-import { mapAuthUser, payloadToAuthUser } from './auth-user';
+import { mapAuthUser } from './auth-user';
 
 describe('mapAuthUser', () => {
   it('extracts email and full name from metadata', () => {
@@ -27,25 +27,5 @@ describe('mapAuthUser', () => {
 
   it('throws when the auth user has no email', () => {
     expect(() => mapAuthUser({ id: 'u1' })).toThrow(/email/i);
-  });
-});
-
-describe('payloadToAuthUser', () => {
-  it('maps sub/email/user_metadata claims', () => {
-    expect(
-      payloadToAuthUser({
-        sub: 'uuid-1',
-        email: 'a@b.com',
-        user_metadata: { full_name: 'A B' },
-      }),
-    ).toEqual({
-      id: 'uuid-1',
-      email: 'a@b.com',
-      user_metadata: { full_name: 'A B' },
-    });
-  });
-
-  it('throws when sub is missing', () => {
-    expect(() => payloadToAuthUser({ email: 'a@b.com' })).toThrow(/sub/i);
   });
 });

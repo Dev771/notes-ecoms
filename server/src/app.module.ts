@@ -22,6 +22,9 @@ import { AuthModule } from './auth/auth.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(TenantMiddleware).exclude('health').forRoutes('*path');
+    consumer
+      .apply(TenantMiddleware)
+      .exclude('health', 'auth/google', 'auth/google/callback')
+      .forRoutes('*path');
   }
 }

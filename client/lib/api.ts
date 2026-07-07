@@ -1,13 +1,17 @@
-import { supabase } from './supabase'
+import { getAuthToken } from './auth-token';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const { data } = await supabase.auth.getSession()
-  const headers = new Headers(init.headers)
-  headers.set('Content-Type', 'application/json')
-  if (data.session) headers.set('Authorization', `Bearer ${data.session.access_token}`)
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers })
-  if (!res.ok) throw new Error(`API ${res.status} on ${path}`)
-  return (await res.json()) as T
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', 'application/json');
+  const token = getAuthToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(apiUrl(path), { ...init, headers });
+  if (!res.ok) throw new Error(`API ${res.status} on ${path}`);
+  return (await res.json()) as T;
 }

@@ -24,4 +24,8 @@ export class TenantService {
   async resolveByHost(host: string | null): Promise<Tenant | null> {
     return pickTenantForHost(host, await this.activeTenants());
   }
+
+  async allActive(): Promise<Tenant[]> {
+    return this.activeTenants();
+  }
 }
