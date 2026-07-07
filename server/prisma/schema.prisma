@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum PaymentMode {
+  GATEWAY
+  MANUAL_UPI
+}
+
+enum DriveStatus {
+  UNVERIFIED
+  VERIFIED
+  ERROR
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+enum ProductType {
+  NOTE
+  BUNDLE
+}
+
+enum Subject {
+  SCIENCE
+  MATHS
+  SST
+  ENGLISH
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum OrderStatus {
+  PENDING
+  PENDING_VERIFICATION
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum EntitlementStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+}
+
+enum JobType {
+  DRIVE_GRANT
+  DELIVERY_EMAIL
+  PREVIEW_GENERATION
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  DEAD
+}
+
+enum EnquiryType {
+  UPDATE_NOTE
+  NEW_TOPIC
+  ISSUE
+}
+
+enum EnquiryStatus {
+  OPEN
+  RESOLVED
+}
+
+model Tenant {
+  id                       String       @id @default(cuid())
+  slug                     String       @unique
+  name                     String
+  domains                  String[]
+  isDefault                Boolean      @default(false)
+  branding                 Json         @default("{}")
+  supportEmail             String
+  paymentMode              PaymentMode  @default(MANUAL_UPI)
+  upiVpa                   String?
+  razorpayKeyId            String?
+  razorpayKeySecretEnc     String?
+  razorpayWebhookSecretEnc String?
+  driveRootFolderId        String?
+  driveStatus              DriveStatus  @default(UNVERIFIED)
+  status                   TenantStatus @default(ACTIVE)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  users         User[]
+  products      Product[]
+  aliases       ProductAlias[]
+  orders        Order[]
+  entitlements  Entitlement[]
+  jobs          FulfillmentJob[]
+  enquiries     Enquiry[]
+  blogPosts     BlogPost[]
+  searchLogs    SearchLog[]
+  webhookEvents WebhookEvent[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  authId    String // Supabase auth.users id (uuid)
+  email     String
+  name      String?
+  role      Role     @default(STUDENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders       Order[]
+  entitlements Entitlement[]
+
+  @@unique([tenantId, authId])
+  @@unique([tenantId, email])
+}
+
+model Product {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  type         ProductType
+  slug         String
+  title        String // official NCERT title
+  description  String        @default("")
+  classLevel   Int // 9 | 10
+  subject      Subject
+  chapterNo    Int?
+  pricePaise   Int
+  driveFileId  String? // note products; null for bundles
+  coverPath    String? // Supabase Storage path
+  previewPaths String[] // watermarked preview images
+  previewPages Int[] // PDF pages to render (default [1,2,3], set in Phase 2)
+  status       ProductStatus @default(DRAFT)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  aliases      ProductAlias[]
+  bundleItems  BundleItem[]   @relation("bundle")
+  inBundles    BundleItem[]   @relation("note")
+  orderItems   OrderItem[]
+  entitlements Entitlement[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, status, classLevel, subject])
+}
+
+model BundleItem {
+  id       String  @id @default(cuid())
+  bundleId String
+  bundle   Product @relation("bundle", fields: [bundleId], references: [id])
+  noteId   String
+  note     Product @relation("note", fields: [noteId], references: [id])
+
+  @@unique([bundleId, noteId])
+}
+
+model ProductAlias {
+  id        String  @id @default(cuid())
+  tenantId  String
+  tenant    Tenant  @relation(fields: [tenantId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  alias     String
+
+  @@index([tenantId])
+}
+
+model Order {
+  id               String      @id @default(cuid())
+  tenantId         String
+  tenant           Tenant      @relation(fields: [tenantId], references: [id])
+  userId           String
+  user             User        @relation(fields: [userId], references: [id])
+  status           OrderStatus @default(PENDING)
+  totalPaise       Int
+  paymentMode      PaymentMode
+  gatewayOrderId   String? // Razorpay order id
+  gatewayPaymentId String? // Razorpay payment id
+  utrReference     String? // manual UPI mode: buyer-submitted UTR
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  items OrderItem[]
+
+  @@index([tenantId, status, createdAt])
+}
+
+model OrderItem {
+  id            String  @id @default(cuid())
+  orderId       String
+  order         Order   @relation(fields: [orderId], references: [id])
+  productId     String
+  product       Product @relation(fields: [productId], references: [id])
+  titleSnapshot String
+  pricePaise    Int
+}
+
+model Entitlement {
+  id                String            @id @default(cuid())
+  tenantId          String
+  tenant            Tenant            @relation(fields: [tenantId], references: [id])
+  userId            String
+  user              User              @relation(fields: [userId], references: [id])
+  productId         String // always a NOTE product (bundles expand)
+  product           Product           @relation(fields: [productId], references: [id])
+  drivePermissionId String?
+  status            EntitlementStatus @default(PENDING)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([tenantId, userId, productId])
+}
+
+model FulfillmentJob {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  type        JobType
+  payload     Json
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  nextRunAt   DateTime  @default(now())
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, nextRunAt])
+}
+
+model WebhookEvent {
+  id         String   @id // gateway event id — primary key IS the dedupe
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  receivedAt DateTime @default(now())
+}
+
+model Enquiry {
+  id        String        @id @default(cuid())
+  tenantId  String
+  tenant    Tenant        @relation(fields: [tenantId], references: [id])
+  type      EnquiryType
+  name      String
+  email     String
+  message   String
+  status    EnquiryStatus @default(OPEN)
+  createdAt DateTime      @default(now())
+
+  @@index([tenantId, status])
+}
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  slug        String
+  title       String
+  excerpt     String    @default("")
+  contentMd   String
+  coverPath   String?
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([tenantId, slug])
+}
+
+model SearchLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  query       String
+  resultCount Int
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
