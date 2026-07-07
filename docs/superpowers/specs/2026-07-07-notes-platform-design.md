@@ -15,11 +15,15 @@ Decisions made during discovery:
 | Tenancy | One shared multi-tenant app, single client at launch | More clients expected within ~6–12 months; tenant-aware schema is cheap now, painful to retrofit |
 | Drive ownership | Client keeps notes in their own Drive, connects it to the platform | Client retains IP custody; onboarding stays repeatable per tenant |
 | Budget | ~Free until revenue | Free tiers throughout; only real cost is the domain |
-| Architecture | Approach A: single Next.js full-stack app | New client = config row + DNS, not a new deployment or codebase fork |
+| Architecture | One shared multi-tenant platform | New client = config row + DNS, not a new deployment or codebase fork |
+| Backend split (revised 2026-07-07) | Dedicated NestJS API server + Next.js frontend, instead of Next.js route handlers | User decision: wants a standalone always-on backend. Buys simpler background workers and no serverless limits; accepts a second deployment and its hosting cost |
 
 ## 2. Stack
 
-One **Next.js 16** app (App Router, TypeScript, Tailwind CSS): storefront, student dashboard, admin panel, and all backend logic as route handlers.
+Two apps in one repo (`client/` + `server/`, plain npm, no workspace tooling — the same layout as the developer's other monorepos):
+
+- **`client/` — Next.js 16** (App Router, TypeScript, Tailwind CSS): storefront, student dashboard, admin panel UI. Holds no secrets and never touches the database; it talks to the API with a Supabase bearer token.
+- **`server/` — NestJS 11** (TypeScript, Jest): all business logic — tenant resolution, catalog, search, orders, Razorpay webhooks, Google Drive grants, the outbox worker (`@nestjs/schedule` in-process cron), email. The only process that touches Postgres or holds credentials. Runs on :3001 in dev.
 
 | Concern | Service | Notes |
 |---|---|---|
@@ -29,9 +33,10 @@ One **Next.js 16** app (App Router, TypeScript, Tailwind CSS): storefront, stude
 | Payments | Razorpay (default) behind a thin `PaymentProvider` interface | Checkout in UPI QR/intent mode; per-tenant keys, money settles to the client's account; optional manual-UPI bridge mode (§5) |
 | Email | Resend + React Email | 3k/month free; delivery emails, enquiry notifications, dead-letter alerts |
 | Drive automation | `googleapis` SDK + one platform service account | See §4 |
-| Hosting | Vercel Hobby while building → Vercel Pro (~₹1,700/mo) or Cloudflare via OpenNext at commercial launch | **Vercel Hobby formally disallows commercial use** — flagged, not ignorable |
+| Hosting (client) | Vercel Hobby while building → Vercel Pro (~₹1,700/mo) or Cloudflare at commercial launch | **Vercel Hobby formally disallows commercial use** — flagged, not ignorable |
+| Hosting (server) | Render/Railway free tier while building → always-on paid tier (~US$5/mo) at launch | Free tiers sleep on idle — fatal for webhooks in production, tolerable in dev (Razorpay retries) |
 
-No Redis, no queue service, no search service. Reliability comes from a DB-backed outbox (§5), search from Postgres (§7).
+No Redis, no queue service, no search service. Reliability comes from a DB-backed outbox processed by the NestJS in-process cron worker (§5); search is Postgres (§7).
 
 **Why Postgres, not MongoDB or MySQL.** The domain is relational and transactional: orders ↔ items ↔ products ↔ entitlements ↔ users, money math, hard uniqueness guarantees (one entitlement per user+product, webhook event dedupe), multi-row transactions (mark paid + create jobs atomically), and admin analytics that are joins/aggregations. The search design additionally needs `pg_trgm` trigram similarity, which MySQL and vanilla MongoDB lack. Storage is a non-factor: PDFs live in Google Drive and images in Supabase Storage — the database holds only metadata (thousands of orders ≈ a few MB), and MongoDB Atlas's free tier (512MB) is the same size as Supabase's anyway.
 
@@ -39,7 +44,7 @@ No Redis, no queue service, no search service. Reliability comes from a DB-backe
 
 - `tenants` table: name, custom domains, branding JSON (logo, colors, institute copy), **encrypted** Razorpay key id/secret + webhook secret, Drive root folder ID + connection status, support email, status.
 - Every business table carries `tenant_id` with composite indexes.
-- Next.js middleware resolves `Host` header → tenant (cached) → request context. MVP has one tenant row; unknown hosts fall back to the default tenant.
+- A NestJS middleware resolves every API request's `Origin` header (falling back to `Host`) → tenant (cached 60s) → request context; the storefront fetches its tenant's branding/config from public `GET /tenant/config`. MVP has one tenant row; unknown hosts fall back to the default tenant.
 - A **Prisma client extension auto-injects `tenant_id`** into every query — isolation is systematic, not remembered per-query. Covered by unit tests.
 - Onboarding tenant #2: insert row, point DNS, share Drive folder with the service account, paste Razorpay keys, verify both from the admin panel. No code, no deployment.
 - Supabase RLS is not used for tenant isolation (Prisma connects with the service role); enforcement lives in the app layer and its tests.
@@ -57,7 +62,7 @@ OAuth ("connect your Google account") was rejected deliberately: permission mana
 
 **Revocation:** refunds or admin override delete the stored permission ID.
 
-**Preview generation from the source PDF.** Product previews are derived from the note's own Drive file, not uploaded by hand. On product save, a background job (same outbox mechanism as §5): downloads the PDF via the service account (`files.get`, `alt=media` — Editor access bypasses the viewer download block), rasterizes the admin-chosen pages (default: first 2–3) at low resolution using `pdfjs-dist` + `@napi-rs/canvas` (prebuilt binaries, serverless-safe), applies a diagonal tenant watermark with `sharp`, and stores the images in Supabase Storage. Page 1 doubles as the auto-generated cover thumbnail. Manual image upload remains as a fallback for oversized or unrenderable PDFs.
+**Preview generation from the source PDF.** Product previews are derived from the note's own Drive file, not uploaded by hand. On product save, a background job (same outbox mechanism as §5): downloads the PDF via the service account (`files.get`, `alt=media` — Editor access bypasses the viewer download block), rasterizes the admin-chosen pages (default: first 2–3) at low resolution using `pdfjs-dist` + `@napi-rs/canvas` (prebuilt binaries; runs inside the API's worker process), applies a diagonal tenant watermark with `sharp`, and stores the images in Supabase Storage. Page 1 doubles as the auto-generated cover thumbnail. Manual image upload remains as a fallback for oversized or unrenderable PDFs.
 
 Embedding the paid file's own Drive preview iframe was rejected: the file is private (that's the product), and a separate link-public "preview copy" per product would be manual client work, unwatermarked, and a shareable leak vector — plus Drive iframes are slow and poor on mobile. Server-generated low-res watermarked images keep the PDP fast and yield nothing sellable if scraped.
 
@@ -86,7 +91,7 @@ Cart → Google sign-in → Razorpay Checkout (per-tenant keys)
   → success page polls order status (webhook may beat the redirect)
 ```
 
-**Outbox reliability:** jobs are attempted inline right after the webhook, then a Vercel cron sweeps every minute retrying failures with backoff. Exhausted jobs dead-letter and surface in the admin panel with a manual retry button. Student dashboard shows "access being prepared" for pending items — a slow grant never looks like a lost payment.
+**Outbox reliability:** jobs are attempted inline right after the webhook, then the NestJS worker (`@nestjs/schedule` in-process cron) sweeps every minute retrying failures with backoff. Exhausted jobs dead-letter and surface in the admin panel with a manual retry button. Student dashboard shows "access being prepared" for pending items — a slow grant never looks like a lost payment.
 
 **Edge cases handled:** duplicate webhooks (event-ID dedupe); user closes tab after paying (webhook still fulfills, email still arrives); Drive file deleted/moved by client (job dead-letters, admin alerted, no broken link shown); refund webhook revokes entitlements via stored permission IDs; bundle item already owned (grant skipped, entitlements unique per user+product).
 
@@ -142,7 +147,7 @@ Mobile-first throughout (80%+ mobile traffic; sub-2s PLP budget).
 
 ## 10. Testing
 
-- **Vitest unit tests** where correctness is money: webhook signature verification, event dedupe/idempotency, fulfillment job state machine (mocked `googleapis`/Razorpay), search parsing + ranking, Prisma tenant-isolation extension.
+- **Unit tests where correctness is money** (Jest in `server/`, Vitest in `client/`): webhook signature verification, event dedupe/idempotency, fulfillment job state machine (mocked `googleapis`/Razorpay), search parsing + ranking, Prisma tenant-isolation extension.
 - **Playwright happy path:** browse → search → buy (Razorpay test mode) → entitlement in dashboard.
 - **Manual checklist** for real Drive grants against a staging folder before launch.
 
@@ -160,3 +165,4 @@ Coupons/affiliate codes, wishlist, ratings/reviews, per-buyer forensic watermark
 | Screenshot piracy | Expectation set with client; watermarked previews; forensic watermarking later |
 | Supabase free-tier pause (7-day inactivity) | Non-issue once live traffic exists; cron pings also keep it warm |
 | Client KYC delays gateway go-live | Manual UPI mode lets the store launch pre-KYC; switch to gateway mode when approved |
+| API free-tier sleep breaks webhooks/cron | Tolerable in dev only (Razorpay retries webhooks); moving the API to an always-on paid tier is a launch-checklist item |
