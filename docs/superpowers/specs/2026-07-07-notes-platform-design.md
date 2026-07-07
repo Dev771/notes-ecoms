@@ -25,7 +25,7 @@ One **Next.js 15** app (App Router, TypeScript, Tailwind CSS): storefront, stude
 |---|---|---|
 | Database | Supabase Postgres + **Prisma** | Free 500MB; `pg_trgm` extension powers fuzzy search |
 | Auth | Supabase Auth | Google OAuth (required for Drive delivery anyway) |
-| File storage | Supabase Storage | Cover images + watermarked previews; watermarking via `sharp` at upload time |
+| File storage | Supabase Storage | Cover images + watermarked previews, auto-generated from the note's own Drive PDF (§4) |
 | Payments | Razorpay, per-tenant keys | UPI/cards; each client's money settles to their own Razorpay account |
 | Email | Resend + React Email | 3k/month free; delivery emails, enquiry notifications, dead-letter alerts |
 | Drive automation | `googleapis` SDK + one platform service account | See §4 |
@@ -54,6 +54,10 @@ OAuth ("connect your Google account") was rejected deliberately: permission mana
 2. `copyRequiresWriterPermission: true` is set **once per file at product-creation time** — disables download/print/copy for viewers.
 
 **Revocation:** refunds or admin override delete the stored permission ID.
+
+**Preview generation from the source PDF.** Product previews are derived from the note's own Drive file, not uploaded by hand. On product save, a background job (same outbox mechanism as §5): downloads the PDF via the service account (`files.get`, `alt=media` — Editor access bypasses the viewer download block), rasterizes the admin-chosen pages (default: first 2–3) at low resolution using `pdfjs-dist` + `@napi-rs/canvas` (prebuilt binaries, serverless-safe), applies a diagonal tenant watermark with `sharp`, and stores the images in Supabase Storage. Page 1 doubles as the auto-generated cover thumbnail. Manual image upload remains as a fallback for oversized or unrenderable PDFs.
+
+Embedding the paid file's own Drive preview iframe was rejected: the file is private (that's the product), and a separate link-public "preview copy" per product would be manual client work, unwatermarked, and a shareable leak vector — plus Drive iframes are slow and poor on mobile. Server-generated low-res watermarked images keep the PDP fast and yield nothing sellable if scraped.
 
 **Constraints (client-facing expectations):**
 - Buyer email must be a Google account → hence mandatory Google sign-in (§5).
@@ -93,7 +97,7 @@ All tables carry `tenant_id`. PKs/timestamps omitted.
 | `product_aliases` | Admin-editable search aliases ("Carbon", "Ch 4 Sci", …) |
 | `orders` / `order_items` | Buyer, totals, Razorpay order/payment IDs, status; line items snapshot prices |
 | `entitlements` | Access ledger: user ↔ note product, Drive permission ID, granted/revoked. Unique (user, product) |
-| `fulfillment_jobs` | Outbox: type, payload, attempts, next retry, last error, dead-letter flag |
+| `fulfillment_jobs` | Outbox: type (Drive grant, delivery email, preview generation), payload, attempts, next retry, last error, dead-letter flag |
 | `enquiries` | Request form: type (update / new topic / issue), message, contact, admin status |
 | `blog_posts` | DB-backed markdown per tenant (repo MDX can't be per-tenant or admin-edited) |
 | `search_logs` | Query + result count → "most searched" and "zero results" analytics |
@@ -115,7 +119,7 @@ Mobile-first throughout (80%+ mobile traffic; sub-2s PLP budget).
 
 - **Home:** hero (copy + institute/influencer image, "Shop Class 10" CTA), slim trust-stats bar, Class 9/10 capsule toggles over product grid, Instagram Reels carousel (lazy lite-embeds to protect load time), bundles strip, footer with policy pages (required for Razorpay approval).
 - **PLP:** search bar, capsule filters, sort.
-- **PDP:** watermarked preview gallery, metadata, bundle upsell widget, sticky mobile Buy button.
+- **PDP:** watermarked preview gallery (auto-generated from the note's PDF, §4), metadata, bundle upsell widget, sticky mobile Buy button.
 - **Checkout:** cart → Google sign-in → Razorpay modal → success page with live order status.
 - **Student dashboard:** My Notes grid (opens Drive in new tab), order history + invoice details, profile.
 - **About + enquiry form**, **blog** (list/post, embeddable product cards), **policy pages**.
@@ -124,7 +128,7 @@ Mobile-first throughout (80%+ mobile traffic; sub-2s PLP budget).
 
 `/admin`, role-gated (admin role on user row, checked in middleware + every admin API route). Screens:
 - Overview: revenue, orders, AOV, bundle-vs-single ratio, top searches, zero-result searches.
-- Products & bundles CRUD; "verify Drive file access" button; preview upload with automatic watermarking.
+- Products & bundles CRUD; "verify Drive file access" button; preview generation from the Drive PDF (pick which pages, regenerate on demand) with manual image upload as fallback.
 - Orders: per-item fulfillment status, manual retry, refund-with-revoke.
 - Customers: purchase history, manual grant/revoke.
 - Enquiry inbox; blog editor; tenant settings (branding, Razorpay keys, Drive connection check).
