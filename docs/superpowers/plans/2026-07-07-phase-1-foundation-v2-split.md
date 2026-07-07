@@ -16,7 +16,7 @@
 - TypeScript `strict: true` in both apps; no `any` except where a Prisma extension generic forces a cast (marked inline).
 - All money values are **integer paise** (`pricePaise`, `totalPaise`). Never floats, never rupees.
 - Every tenant-owned table has `tenantId`; server code reads/writes ONLY through `PrismaService.forTenant(tenantId)`. Exceptions: tenant lookup (`TenantService`) and Prisma migrations/seed.
-- The client never imports Prisma, never sees `SECRETS_MASTER_KEY`, `DATABASE_URL`, or any Razorpay/Drive credential. Client env is only `NEXT_PUBLIC_*` values.
+- The client never imports Prisma, never sees `SECRETS_MASTER_KEY`, `DATABASE_URL`, or any Razorpay/Drive credential. Client env is only `NEXT_PUBLIC_*` values — after Task 9b, exactly one: `NEXT_PUBLIC_API_URL`. Zero auth-provider keys in the browser (user decision 2026-07-08).
 - No Redis, no queue services. Background work uses the `FulfillmentJob` outbox table (worker lands in Phase 3).
 - Secrets (Razorpay keys) stored only via `encryptSecret()` (AES-256-GCM, `SECRETS_MASTER_KEY` env, server-side).
 - Every new env var is added to that app's `.env.example` in the same commit. `.env` / `.env.local` are never committed.
@@ -26,15 +26,14 @@
 
 ---
 
-### Task 0: Manual prerequisites (human, one-time)
+### Task 0: Manual prerequisites (human, one-time) — REVISED 2026-07-08 (backend-owned auth)
 
-No code. Do these in browsers; values go into `server/.env` and `client/.env.local` (created in Tasks 2–3).
+No code. Values go into `server/.env`. Supabase is no longer needed for auth — dev runs entirely on the local Docker Postgres; Supabase returns pre-launch for hosted DB/Storage.
 
-- [ ] **Step 1:** Create a Supabase project (free tier, region `ap-south-1` Mumbai). From **Project Settings → Database**, copy the **Transaction pooler** URI (port 6543) and **Session pooler** URI (port 5432).
-- [ ] **Step 2:** In Google Cloud Console, create a project `notes-platform`, configure the OAuth consent screen (External; only `email`/`profile`/`openid` scopes — non-sensitive, no verification hurdle), and create an **OAuth Client ID (Web application)** with authorized redirect URI `https://<your-supabase-ref>.supabase.co/auth/v1/callback`.
-- [ ] **Step 3:** In Supabase **Authentication → Providers → Google**, paste the client ID/secret and enable. In **Authentication → URL Configuration**, add `http://localhost:3000/**` to redirect URLs.
-- [ ] **Step 4:** In Supabase **Project Settings → JWT Keys**, confirm the project uses **asymmetric JWT signing keys** (ES256/RS256 — default on new projects; migrate if it shows legacy HS256). The API verifies tokens against `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`.
-- [ ] **Step 5:** Generate the secrets master key and keep it for `server/.env`: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+- [ ] **Step 1:** In Google Cloud Console, create a project `notes-platform`, configure the OAuth consent screen (External; only `email`/`profile`/`openid` scopes — non-sensitive, no verification hurdle), and create an **OAuth Client ID (Web application)** with authorized redirect URI `http://localhost:3001/auth/google/callback` (add the production API callback later).
+- [ ] **Step 2:** Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` into `server/.env`.
+- [ ] **Step 3:** Generate two independent secrets for `server/.env` (run twice): `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` → `SECRETS_MASTER_KEY` and `AUTH_JWT_SECRET`.
+- [ ] **Step 4 (deferred, pre-launch):** Create the Supabase project for hosted Postgres (+ Storage in Phase 2); apply migrations via `prisma migrate deploy`; **disable the PostgREST Data API for the `public` schema (or add deny-all RLS)** so Prisma tables aren't exposed through Supabase's auto-generated REST API.
 
 ---
 
@@ -1609,6 +1608,546 @@ git commit -m "feat: Supabase JWT auth guard, user sync endpoint, Google sign-in
 
 ---
 
+### Task 9b: Backend-owned Google OAuth — replaces Task 9's Supabase-auth internals (added 2026-07-08)
+
+**Why:** user decision — auth must be entirely backend-managed with zero auth-provider artifacts in the browser. Task 9's work is uncommitted, so this task edits the tree in place. **Survives from Task 9:** `auth-user.ts` `mapAuthUser` + its spec cases, `UsersService.ensureUserRecord`, `users.module.ts`, client page shells. **Removed:** Supabase JWKS guard, `/auth/sync`, `client/lib/supabase.ts`, `@supabase/supabase-js`, `payloadToAuthUser` (Supabase JWT-claims mapper) and its spec block.
+
+**Files:**
+- Create: `server/src/auth/tokens.ts` + `tokens.spec.ts`, `server/src/auth/return-to.ts` + `return-to.spec.ts`, `server/src/auth/google.strategy.ts`, `server/src/auth/google-oauth.guard.ts`, `server/src/auth/jwt-auth.guard.ts`, `client/lib/auth-token.ts`
+- Rewrite: `server/src/auth/auth.controller.ts`, `server/src/auth/auth.module.ts`, `server/src/auth/current-user.decorator.ts`, `client/lib/api.ts`, `client/components/auth-buttons.tsx`, `client/app/auth/callback/page.tsx`
+- Delete: `server/src/auth/supabase-auth.guard.ts`, `client/lib/supabase.ts`; remove `payloadToAuthUser` from `server/src/auth/auth-user.ts` and its describe block from the spec
+- Modify: `server/src/tenant/tenant.service.ts` (expose `allActive()`), `server/src/app.module.ts` (middleware exclusions), `server/.env.example`, `client/.env.example`
+- Deps: `npm --prefix server install @nestjs/passport passport passport-google-oauth20` + `npm --prefix server install -D @types/passport-google-oauth20`; `npm --prefix client uninstall @supabase/supabase-js` (server keeps `jose` — it signs/verifies our own HS256 tokens now)
+
+**Interfaces:**
+- Consumes: `TenantService`, `UsersService.ensureUserRecord`, `PrismaService.forTenant`, `mapAuthUser`
+- Produces:
+  - `signAuthToken/verifyAuthToken` (HS256 via `jose`, `AUTH_JWT_SECRET`, 7-day expiry) with claims `{ userId, tenantId, email, role }`
+  - `signState/verifyState` (10-minute expiry) with `{ tenantId, returnTo }` — CSRF + open-redirect protection for the OAuth round-trip
+  - `tenantForReturnTo(returnTo, tenants)` — pure allow-list: returnTo host must exactly match a tenant domain (NO default fallback — that would be an open redirect)
+  - `GET /auth/google?returnTo=` → 302 to Google; `GET /auth/google/callback` → provisions tenant-scoped user, redirects to `returnTo#token=<jwt>`
+  - `JwtAuthGuard` (verifies bearer, cross-checks token tenant vs request tenant) + `@CurrentUserClaims()`; `GET /auth/me` returns the profile
+  - Client: `apiFetch` attaches the localStorage token; `SignInButton` navigates to the API's `/auth/google`; callback page stores the fragment token
+
+- [ ] **Step 1: TDD — failing specs for the two pure modules**
+
+Create `server/src/auth/tokens.spec.ts`:
+
+```ts
+import { signAuthToken, signState, verifyAuthToken, verifyState } from './tokens';
+
+describe('auth tokens', () => {
+  const original = process.env.AUTH_JWT_SECRET;
+
+  beforeEach(() => {
+    process.env.AUTH_JWT_SECRET = 's'.repeat(64);
+  });
+
+  afterAll(() => {
+    if (original === undefined) delete process.env.AUTH_JWT_SECRET;
+    else process.env.AUTH_JWT_SECRET = original;
+  });
+
+  it('round-trips auth claims', async () => {
+    const token = await signAuthToken({ userId: 'u1', tenantId: 't1', email: 'a@b.com', role: 'STUDENT' });
+    await expect(verifyAuthToken(token)).resolves.toEqual({
+      userId: 'u1',
+      tenantId: 't1',
+      email: 'a@b.com',
+      role: 'STUDENT',
+    });
+  });
+
+  it('round-trips state claims', async () => {
+    const token = await signState({ tenantId: 't1', returnTo: 'http://localhost:3000/auth/callback' });
+    await expect(verifyState(token)).resolves.toEqual({
+      tenantId: 't1',
+      returnTo: 'http://localhost:3000/auth/callback',
+    });
+  });
+
+  it('rejects tampered tokens', async () => {
+    const token = await signAuthToken({ userId: 'u1', tenantId: 't1', email: 'a@b.com', role: 'STUDENT' });
+    const parts = token.split('.');
+    parts[1] = parts[1].slice(0, -2) + 'xx';
+    await expect(verifyAuthToken(parts.join('.'))).rejects.toThrow();
+  });
+
+  it('rejects a state token passed as an auth token', async () => {
+    const state = await signState({ tenantId: 't1', returnTo: 'http://x.com' });
+    await expect(verifyAuthToken(state)).rejects.toThrow(/malformed/i);
+  });
+
+  it('throws a clear error when the secret is missing or too short', async () => {
+    delete process.env.AUTH_JWT_SECRET;
+    await expect(
+      signAuthToken({ userId: 'u', tenantId: 't', email: 'e', role: 'r' }),
+    ).rejects.toThrow(/AUTH_JWT_SECRET/);
+  });
+});
+```
+
+Create `server/src/auth/return-to.spec.ts`:
+
+```ts
+import { tenantForReturnTo } from './return-to';
+
+const tenants = [
+  { slug: 'default', domains: ['localhost'] },
+  { slug: 'sharma', domains: ['sharmanotes.in'] },
+];
+
+describe('tenantForReturnTo', () => {
+  it('matches a tenant by returnTo host (port/www-insensitive)', () => {
+    expect(tenantForReturnTo('http://localhost:3000/auth/callback', tenants)?.slug).toBe('default');
+    expect(tenantForReturnTo('https://www.sharmanotes.in/auth/callback', tenants)?.slug).toBe('sharma');
+  });
+
+  it('rejects hosts matching no tenant — no default fallback (open-redirect guard)', () => {
+    expect(tenantForReturnTo('https://evil.example.com/auth/callback', tenants)).toBeNull();
+  });
+
+  it('rejects non-http(s) schemes', () => {
+    expect(tenantForReturnTo('javascript:alert(1)', tenants)).toBeNull();
+  });
+
+  it('rejects strings that are not URLs', () => {
+    expect(tenantForReturnTo('not a url', tenants)).toBeNull();
+  });
+});
+```
+
+Run: `npm --prefix server test` → Expected: FAIL — cannot find `./tokens` / `./return-to`.
+
+- [ ] **Step 2: Implement the pure modules**
+
+Create `server/src/auth/tokens.ts`:
+
+```ts
+import { SignJWT, jwtVerify } from 'jose';
+
+export type AuthTokenClaims = {
+  userId: string;
+  tenantId: string;
+  email: string;
+  role: string;
+};
+
+export type StateClaims = {
+  tenantId: string;
+  returnTo: string;
+};
+
+function secret(): Uint8Array {
+  const s = process.env.AUTH_JWT_SECRET;
+  if (!s || s.length < 32) {
+    throw new Error('AUTH_JWT_SECRET must be set to at least 32 characters');
+  }
+  return new TextEncoder().encode(s);
+}
+
+async function sign(payload: Record<string, string>, expiry: string): Promise<string> {
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(expiry)
+    .sign(secret());
+}
+
+export async function signAuthToken(claims: AuthTokenClaims): Promise<string> {
+  return sign({ ...claims, kind: 'auth' }, '7d');
+}
+
+export async function verifyAuthToken(token: string): Promise<AuthTokenClaims> {
+  const { payload } = await jwtVerify(token, secret());
+  if (
+    payload.kind !== 'auth' ||
+    typeof payload.userId !== 'string' ||
+    typeof payload.tenantId !== 'string' ||
+    typeof payload.email !== 'string' ||
+    typeof payload.role !== 'string'
+  ) {
+    throw new Error('Malformed auth token');
+  }
+  return { userId: payload.userId, tenantId: payload.tenantId, email: payload.email, role: payload.role };
+}
+
+export async function signState(claims: StateClaims): Promise<string> {
+  return sign({ ...claims, kind: 'state' }, '10m');
+}
+
+export async function verifyState(token: string): Promise<StateClaims> {
+  const { payload } = await jwtVerify(token, secret());
+  if (payload.kind !== 'state' || typeof payload.tenantId !== 'string' || typeof payload.returnTo !== 'string') {
+    throw new Error('Malformed state token');
+  }
+  return { tenantId: payload.tenantId, returnTo: payload.returnTo };
+}
+```
+
+Create `server/src/auth/return-to.ts`:
+
+```ts
+function normalizeHost(host: string): string {
+  return host.toLowerCase().split(':')[0].replace(/^www\./, '');
+}
+
+/**
+ * Allow-list validation for OAuth returnTo targets: the host must exactly
+ * match an active tenant's domain. Deliberately NO isDefault fallback —
+ * falling back would let any URL redirect through us (open redirect).
+ */
+export function tenantForReturnTo<T extends { domains: string[] }>(
+  returnTo: string,
+  tenants: T[],
+): T | null {
+  let host: string;
+  try {
+    const url = new URL(returnTo);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    host = url.host;
+  } catch {
+    return null;
+  }
+  const h = normalizeHost(host);
+  return tenants.find((t) => t.domains.some((d) => normalizeHost(d) === h)) ?? null;
+}
+```
+
+Run: `npm --prefix server test` → Expected: tokens + return-to suites PASS.
+
+- [ ] **Step 3: Server — strategy, guards, controller, wiring**
+
+Install deps (see Files above). Create `server/src/auth/google.strategy.ts`:
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { Profile, Strategy } from 'passport-google-oauth20';
+import type { AuthUserLike } from './auth-user';
+
+@Injectable()
+export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
+  constructor() {
+    super({
+      // 'unconfigured' lets the app boot without credentials (sign-in fails
+      // at Google's door until Task 0 fills server/.env)
+      clientID: process.env.GOOGLE_CLIENT_ID ?? 'unconfigured',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? 'unconfigured',
+      callbackURL: process.env.GOOGLE_CALLBACK_URL ?? 'http://localhost:3001/auth/google/callback',
+      scope: ['openid', 'email', 'profile'],
+    });
+  }
+
+  validate(_accessToken: string, _refreshToken: string, profile: Profile): AuthUserLike {
+    return {
+      id: profile.id,
+      email: profile.emails?.[0]?.value ?? null,
+      user_metadata: { full_name: profile.displayName },
+    };
+  }
+}
+```
+
+Create `server/src/auth/google-oauth.guard.ts`:
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Injectable()
+export class GoogleOAuthGuard extends AuthGuard('google') {}
+```
+
+Create `server/src/auth/jwt-auth.guard.ts`:
+
+```ts
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import type { Request } from 'express';
+import type { Tenant } from '@prisma/client';
+import { AuthTokenClaims, verifyAuthToken } from './tokens';
+
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const req = ctx
+      .switchToHttp()
+      .getRequest<Request & { tenant?: Tenant; authClaims?: AuthTokenClaims }>();
+    const header = req.headers.authorization ?? '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!token) throw new UnauthorizedException('Missing bearer token');
+    let claims: AuthTokenClaims;
+    try {
+      claims = await verifyAuthToken(token);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    if (req.tenant && req.tenant.id !== claims.tenantId) {
+      throw new UnauthorizedException('Token does not belong to this tenant');
+    }
+    req.authClaims = claims;
+    return true;
+  }
+}
+```
+
+Rewrite `server/src/auth/current-user.decorator.ts`:
+
+```ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import type { Request } from 'express';
+import type { AuthTokenClaims } from './tokens';
+
+export const CurrentUserClaims = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext): AuthTokenClaims =>
+    ctx.switchToHttp().getRequest<Request & { authClaims: AuthTokenClaims }>().authClaims,
+);
+```
+
+In `server/src/tenant/tenant.service.ts`, add a public accessor (keep the private cache method):
+
+```ts
+  async allActive(): Promise<Tenant[]> {
+    return this.activeTenants();
+  }
+```
+
+Rewrite `server/src/auth/auth.controller.ts`:
+
+```ts
+import { BadRequestException, Controller, Get, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { PrismaService } from '../prisma/prisma.service';
+import { TenantService } from '../tenant/tenant.service';
+import { UsersService } from '../users/users.service';
+import type { AuthUserLike } from './auth-user';
+import { CurrentUserClaims } from './current-user.decorator';
+import { GoogleOAuthGuard } from './google-oauth.guard';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { tenantForReturnTo } from './return-to';
+import { AuthTokenClaims, signAuthToken, signState, verifyState } from './tokens';
+
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly tenants: TenantService,
+    private readonly users: UsersService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  @Get('google')
+  async start(@Query('returnTo') returnTo = '', @Res() res: Response): Promise<void> {
+    const tenant = tenantForReturnTo(returnTo, await this.tenants.allActive());
+    if (!tenant) throw new BadRequestException('returnTo does not match any tenant domain');
+    const state = await signState({ tenantId: tenant.id, returnTo });
+    const params = new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID ?? 'unconfigured',
+      redirect_uri: process.env.GOOGLE_CALLBACK_URL ?? 'http://localhost:3001/auth/google/callback',
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+    });
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  }
+
+  @Get('google/callback')
+  @UseGuards(GoogleOAuthGuard)
+  async callback(@Req() req: Request & { user: AuthUserLike }, @Res() res: Response): Promise<void> {
+    const state = await verifyState(String(req.query.state ?? '')).catch(() => null);
+    if (!state) throw new BadRequestException('Invalid or expired OAuth state');
+    const user = await this.users.ensureUserRecord(state.tenantId, req.user);
+    const token = await signAuthToken({
+      userId: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      role: user.role,
+    });
+    res.redirect(`${state.returnTo}#token=${token}`);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  async me(@CurrentUserClaims() claims: AuthTokenClaims) {
+    const user = await this.prisma
+      .forTenant(claims.tenantId)
+      .user.findUnique({ where: { id: claims.userId, tenantId: claims.tenantId } });
+    if (!user) throw new BadRequestException('User no longer exists');
+    return { id: user.id, email: user.email, name: user.name, role: user.role };
+  }
+}
+```
+
+Rewrite `server/src/auth/auth.module.ts`:
+
+```ts
+import { Module } from '@nestjs/common';
+import { PassportModule } from '@nestjs/passport';
+import { TenantModule } from '../tenant/tenant.module';
+import { UsersModule } from '../users/users.module';
+import { AuthController } from './auth.controller';
+import { GoogleStrategy } from './google.strategy';
+
+@Module({
+  imports: [PassportModule, UsersModule, TenantModule],
+  controllers: [AuthController],
+  providers: [GoogleStrategy],
+})
+export class AuthModule {}
+```
+
+In `server/src/app.module.ts`, extend the middleware exclusions — the OAuth entry/callback derive their tenant from `returnTo`/`state`, not from Origin (Google's redirect has neither a useful Origin nor a tenant Host):
+
+```ts
+    consumer
+      .apply(TenantMiddleware)
+      .exclude('health', 'auth/google', 'auth/google/callback')
+      .forRoutes('*path');
+```
+
+Delete `server/src/auth/supabase-auth.guard.ts`. Remove `payloadToAuthUser` from `server/src/auth/auth-user.ts` and its describe block from `auth-user.spec.ts` (keep `mapAuthUser` + its tests).
+
+Update `server/.env.example` — remove the `SUPABASE_URL` block, add:
+
+```bash
+# Google OAuth (backend-owned auth)
+GOOGLE_CLIENT_ID="<google-oauth-client-id>"
+GOOGLE_CLIENT_SECRET="<google-oauth-client-secret>"
+GOOGLE_CALLBACK_URL="http://localhost:3001/auth/google/callback"
+
+# 64 hex chars: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+AUTH_JWT_SECRET="<64-hex-chars>"
+```
+
+Run: `npm --prefix server test` → all suites PASS. `npm --prefix server run build` → clean.
+
+- [ ] **Step 4: Client — drop Supabase, token-based session**
+
+`npm --prefix client uninstall @supabase/supabase-js`. Delete `client/lib/supabase.ts`.
+
+Create `client/lib/auth-token.ts`:
+
+```ts
+const KEY = 'notes_auth_token';
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(KEY);
+}
+
+export function setAuthToken(token: string): void {
+  window.localStorage.setItem(KEY, token);
+}
+
+export function clearAuthToken(): void {
+  window.localStorage.removeItem(KEY);
+}
+```
+
+Rewrite `client/lib/api.ts`:
+
+```ts
+import { getAuthToken } from './auth-token';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', 'application/json');
+  const token = getAuthToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(apiUrl(path), { ...init, headers });
+  if (!res.ok) throw new Error(`API ${res.status} on ${path}`);
+  return (await res.json()) as T;
+}
+```
+
+Rewrite `client/components/auth-buttons.tsx`:
+
+```tsx
+'use client';
+
+import { apiUrl } from '@/lib/api';
+import { clearAuthToken } from '@/lib/auth-token';
+
+export function SignInButton() {
+  const signIn = () => {
+    const returnTo = `${window.location.origin}/auth/callback`;
+    window.location.assign(apiUrl(`/auth/google?returnTo=${encodeURIComponent(returnTo)}`));
+  };
+  return (
+    <button onClick={signIn} className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white">
+      Sign in with Google
+    </button>
+  );
+}
+
+export function SignOutButton() {
+  const signOut = () => {
+    clearAuthToken();
+    window.location.assign('/');
+  };
+  return (
+    <button onClick={signOut} className="rounded-md border px-4 py-2 text-sm">
+      Sign out
+    </button>
+  );
+}
+```
+
+Rewrite `client/app/auth/callback/page.tsx`:
+
+```tsx
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { setAuthToken } from '@/lib/auth-token';
+
+export default function AuthCallbackPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const token = hash.get('token');
+    if (token) {
+      setAuthToken(token);
+      router.replace('/');
+    } else {
+      router.replace('/auth/error');
+    }
+  }, [router]);
+
+  return <main className="p-8 text-center text-sm text-gray-600">Signing you in…</main>;
+}
+```
+
+Update `client/.env.example` to exactly:
+
+```bash
+# NestJS API base URL
+NEXT_PUBLIC_API_URL="http://localhost:3001"
+```
+
+Run: `npm --prefix client test` → green. `npm --prefix client run build` → clean.
+
+- [ ] **Step 5: Boot verification (no Google credentials needed)**
+
+Start the server (`npm --prefix server run start:dev`), then verify:
+1. `http://localhost:3001/auth/google?returnTo=http://localhost:3000/auth/callback` → 302 redirect whose `Location` starts with `https://accounts.google.com/o/oauth2/v2/auth` and contains a `state` param.
+2. `http://localhost:3001/auth/google?returnTo=https://evil.example.com/x` → 400 "returnTo does not match any tenant domain".
+3. `http://localhost:3001/auth/me` without a token → 401.
+Stop the server.
+
+- [ ] **Step 6: Format, lint, DO NOT COMMIT**
+
+`npm --prefix server run format`, lint both apps clean. Leave everything uncommitted (commit hold in effect); report the file inventory.
+
+---
+
 ### Task 10: Tenant config endpoint, branded layout, end-to-end verification
 
 **Files:**
@@ -1736,23 +2275,26 @@ export async function getTenantConfig(): Promise<TenantConfig> {
 Create `client/components/site-header.tsx`:
 
 ```tsx
-'use client'
+'use client';
 
-import Link from 'next/link'
-import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { SignInButton, SignOutButton } from '@/components/auth-buttons'
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api';
+import { getAuthToken } from '@/lib/auth-token';
+import { SignInButton, SignOutButton } from '@/components/auth-buttons';
+
+type Me = { id: string; email: string; name: string | null; role: string };
 
 export function SiteHeader({ tenantName }: { tenantName: string }) {
-  const [email, setEmail] = useState<string | null>(null)
+  const [me, setMe] = useState<Me | null>(null);
+  const email = me?.name ?? me?.email ?? null;
 
   useEffect(() => {
-    void supabase.auth.getSession().then(({ data }) => setEmail(data.session?.user.email ?? null))
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) =>
-      setEmail(session?.user.email ?? null),
-    )
-    return () => sub.subscription.unsubscribe()
-  }, [])
+    if (!getAuthToken()) return;
+    apiFetch<Me>('/auth/me')
+      .then(setMe)
+      .catch(() => setMe(null));
+  }, []);
 
   return (
     <header className="border-b">
@@ -1853,7 +2395,7 @@ git commit -m "feat: tenant config endpoint and branded storefront shell with au
 - `npm --prefix client test` green (smoke, branding).
 - `npm --prefix server run build` and `npm --prefix client run build` clean.
 - `GET /health` and `GET /tenant/config` return live data; storefront renders seeded tenant branding.
-- Google sign-in → `POST /auth/sync` → tenant-scoped `User` row.
+- Google sign-in via the API's own OAuth flow (`/auth/google` → callback → `returnTo#token=`) → tenant-scoped `User` row; `GET /auth/me` returns the profile with a valid first-party JWT.
 - Schema migrated including `pg_trgm` (verify in Supabase SQL editor: `SELECT * FROM pg_extension WHERE extname = 'pg_trgm';`).
 
 **Next:** write the Phase 2 plan (catalog CRUD, Drive client, preview generation, PLP/PDP, academic search) against this split layout.
