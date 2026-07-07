@@ -1,12 +1,12 @@
-# Phase 1: Foundation Implementation Plan
+﻿# Phase 1: Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A running multi-tenant Next.js 15 app: full database schema migrated, tenant resolved from the request host, all queries tenant-scoped, secrets encrypted, Google sign-in creating tenant-scoped users, and a tenant-branded base layout.
+**Goal:** A running multi-tenant Next.js 16 app: full database schema migrated, tenant resolved from the request host, all queries tenant-scoped, secrets encrypted, Google sign-in creating tenant-scoped users, and a tenant-branded base layout.
 
-**Architecture:** Single Next.js 15 App Router app (no separate backend). Supabase hosts Postgres and Auth. Prisma is the only DB access path; a client extension injects `tenantId` into every query. Tenant is resolved per-request from the `Host` header by a cached server helper (NOT in middleware — Prisma cannot run on the edge runtime; middleware only refreshes the Supabase session).
+**Architecture:** Single Next.js 16 App Router app (no separate backend). Supabase hosts Postgres and Auth. Prisma is the only DB access path; a client extension injects `tenantId` into every query. Tenant is resolved per-request from the `Host` header by a cached server helper (NOT in middleware â€” Prisma cannot run on the edge runtime; middleware only refreshes the Supabase session).
 
-**Tech Stack:** Next.js 15 (App Router, TypeScript), Tailwind CSS, Prisma 6 + Supabase Postgres, Supabase Auth (`@supabase/ssr`), Vitest, tsx (seed runner).
+**Tech Stack:** Next.js 16 (App Router, TypeScript), Tailwind CSS, Prisma 6 + Supabase Postgres, Supabase Auth (`@supabase/ssr`), Vitest, tsx (seed runner).
 
 ## Global Constraints
 
@@ -18,7 +18,7 @@
 - Secrets (Razorpay keys) stored only via `encryptSecret()` (AES-256-GCM, `SECRETS_MASTER_KEY` env).
 - Every new env var is added to `.env.example` in the same commit.
 - Tests: Vitest, files in `tests/**/*.test.ts`, run with `npm test`. Commit after every green step.
-- Windows dev machine: all commands must work in PowerShell (plain `npx`/`npm`/`git` — no bash-isms).
+- Windows dev machine: all commands must work in PowerShell (plain `npx`/`npm`/`git` â€” no bash-isms).
 
 ---
 
@@ -26,14 +26,14 @@
 
 No code. Do these in browsers, record values in `.env` (created in Task 1).
 
-- [ ] **Step 1:** Create a Supabase project (free tier, region `ap-south-1` Mumbai). From **Project Settings → Database**, copy the **Transaction pooler** URI (port 6543) and **Session pooler** URI (port 5432).
-- [ ] **Step 2:** In Google Cloud Console, create a project `notes-platform`, configure the OAuth consent screen (External, only `email`/`profile`/`openid` scopes — these are non-sensitive; no verification hurdle), and create an **OAuth Client ID (Web application)**. Authorized redirect URI: `https://<your-supabase-ref>.supabase.co/auth/v1/callback`.
-- [ ] **Step 3:** In Supabase **Authentication → Providers → Google**, paste the client ID/secret and enable it. In **Authentication → URL Configuration**, add `http://localhost:3000/**` to redirect URLs.
+- [ ] **Step 1:** Create a Supabase project (free tier, region `ap-south-1` Mumbai). From **Project Settings â†’ Database**, copy the **Transaction pooler** URI (port 6543) and **Session pooler** URI (port 5432).
+- [ ] **Step 2:** In Google Cloud Console, create a project `notes-platform`, configure the OAuth consent screen (External, only `email`/`profile`/`openid` scopes â€” these are non-sensitive; no verification hurdle), and create an **OAuth Client ID (Web application)**. Authorized redirect URI: `https://<your-supabase-ref>.supabase.co/auth/v1/callback`.
+- [ ] **Step 3:** In Supabase **Authentication â†’ Providers â†’ Google**, paste the client ID/secret and enable it. In **Authentication â†’ URL Configuration**, add `http://localhost:3000/**` to redirect URLs.
 - [ ] **Step 4:** Generate the secrets master key and keep it for `.env`: run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
 ---
 
-### Task 1: Scaffold Next.js 15 + Vitest
+### Task 1: Scaffold Next.js 16 + Vitest
 
 **Files:**
 - Create: entire Next.js scaffold at repo root (create-next-app tolerates existing `docs/` and `.git/`)
@@ -50,7 +50,7 @@ No code. Do these in browsers, record values in `.env` (created in Task 1).
 npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --use-npm --turbopack
 ```
 
-Expected: scaffold completes; `app/`, `package.json`, `tsconfig.json` exist. If it complains about the directory, the only allowed pre-existing entries are `.git` and `docs` — both are on create-next-app's allowlist, so this should not happen.
+Expected: scaffold completes; `app/`, `package.json`, `tsconfig.json` exist. If it complains about the directory, the only allowed pre-existing entries are `.git` and `docs` â€” both are on create-next-app's allowlist, so this should not happen.
 
 - [ ] **Step 2: Install and configure Vitest**
 
@@ -93,15 +93,15 @@ describe('toolchain', () => {
 
 - [ ] **Step 4: Run tests and dev server**
 
-Run: `npm test` → Expected: `1 passed`.
-Run: `npm run dev`, open `http://localhost:3000` → Expected: Next.js starter page renders. Stop the server.
+Run: `npm test` â†’ Expected: `1 passed`.
+Run: `npm run dev`, open `http://localhost:3000` â†’ Expected: Next.js starter page renders. Stop the server.
 
 - [ ] **Step 5: Create env files**
 
 Create `.env.example`:
 
 ```bash
-# Supabase Postgres — Transaction pooler (runtime) and Session pooler (migrations)
+# Supabase Postgres â€” Transaction pooler (runtime) and Session pooler (migrations)
 DATABASE_URL="postgresql://postgres.<project-ref>:<db-password>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
 DIRECT_URL="postgresql://postgres.<project-ref>:<db-password>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
 
@@ -113,13 +113,13 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY="<anon-key>"
 SECRETS_MASTER_KEY="<64-hex-chars>"
 ```
 
-Copy to `.env` and fill with the real values from Task 0. Verify `.gitignore` contains `.env*` (create-next-app adds it) — `.env` must never be committed.
+Copy to `.env` and fill with the real values from Task 0. Verify `.gitignore` contains `.env*` (create-next-app adds it) â€” `.env` must never be committed.
 
 - [ ] **Step 6: Commit**
 
 ```powershell
 git add -A
-git commit -m "chore: scaffold Next.js 15 with Vitest and env template"
+git commit -m "chore: scaffold Next.js 16 with Vitest and env template"
 ```
 
 ---
@@ -333,7 +333,7 @@ model FulfillmentJob {
 }
 
 model WebhookEvent {
-  id         String   @id // gateway event id — primary key IS the dedupe
+  id         String   @id // gateway event id â€” primary key IS the dedupe
   tenantId   String
   tenant     Tenant   @relation(fields: [tenantId], references: [id])
   receivedAt DateTime @default(now())
@@ -428,8 +428,8 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `npx prisma validate` → Expected: `The schema at prisma/schema.prisma is valid`.
-Run: `npm test` → Expected: still green.
+Run: `npx prisma validate` â†’ Expected: `The schema at prisma/schema.prisma is valid`.
+Run: `npm test` â†’ Expected: still green.
 
 ```powershell
 git add -A
@@ -446,7 +446,7 @@ git commit -m "feat: full Prisma schema with tenant scoping fields and pg_trgm i
 
 **Interfaces:**
 - Consumes: `SECRETS_MASTER_KEY` env (64 hex chars)
-- Produces: `encryptSecret(plain: string): string` and `decryptSecret(token: string): string` — token format `<iv-b64>.<authTag-b64>.<ciphertext-b64>`. Phase 3 stores Razorpay secrets with these.
+- Produces: `encryptSecret(plain: string): string` and `decryptSecret(token: string): string` â€” token format `<iv-b64>.<authTag-b64>.<ciphertext-b64>`. Phase 3 stores Razorpay secrets with these.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -491,7 +491,7 @@ describe('secrets crypto', () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test` → Expected: FAIL — `Cannot find module '@/lib/crypto'` (or equivalent resolution error).
+Run: `npm test` â†’ Expected: FAIL â€” `Cannot find module '@/lib/crypto'` (or equivalent resolution error).
 
 - [ ] **Step 3: Implement**
 
@@ -532,7 +532,7 @@ export function decryptSecret(token: string): string {
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm test` → Expected: all crypto tests PASS.
+Run: `npm test` â†’ Expected: all crypto tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -552,8 +552,8 @@ git commit -m "feat: AES-256-GCM secret encryption for tenant credentials"
 **Interfaces:**
 - Consumes: `prisma` from `lib/db.ts` (Task 2)
 - Produces:
-  - `pickTenantForHost<T extends { domains: string[]; isDefault: boolean }>(host: string | null, tenants: T[]): T | null` — pure, exported for tests
-  - `getCurrentTenant(): Promise<Tenant>` — server-only helper; reads `headers()`, caches the tenant list 60s, throws if no tenant matches and no default exists. Every page/route in later phases calls this.
+  - `pickTenantForHost<T extends { domains: string[]; isDefault: boolean }>(host: string | null, tenants: T[]): T | null` â€” pure, exported for tests
+  - `getCurrentTenant(): Promise<Tenant>` â€” server-only helper; reads `headers()`, caches the tenant list 60s, throws if no tenant matches and no default exists. Every page/route in later phases calls this.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -604,7 +604,7 @@ describe('pickTenantForHost', () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test` → Expected: FAIL — cannot resolve `@/lib/tenant`.
+Run: `npm test` â†’ Expected: FAIL â€” cannot resolve `@/lib/tenant`.
 
 - [ ] **Step 3: Implement**
 
@@ -651,7 +651,7 @@ Install the guard package:
 npm install server-only
 ```
 
-Note: `tests/tenant.test.ts` imports only the pure `pickTenantForHost`. Vitest must not choke on `server-only`/`next/headers` — since the module is imported as a whole, mock them. Add to the TOP of `tests/tenant.test.ts` (before the `@/lib/tenant` import):
+Note: `tests/tenant.test.ts` imports only the pure `pickTenantForHost`. Vitest must not choke on `server-only`/`next/headers` â€” since the module is imported as a whole, mock them. Add to the TOP of `tests/tenant.test.ts` (before the `@/lib/tenant` import):
 
 ```ts
 import { vi } from 'vitest'
@@ -663,7 +663,7 @@ vi.mock('@/lib/db', () => ({ prisma: {} }))
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm test` → Expected: all tenant tests PASS.
+Run: `npm test` â†’ Expected: all tenant tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -683,8 +683,8 @@ git commit -m "feat: host-based tenant resolution with default fallback"
 **Interfaces:**
 - Consumes: `prisma` from `lib/db.ts`
 - Produces:
-  - `applyTenantScope(model: string, operation: string, args: Record<string, unknown> | undefined, tenantId: string): Record<string, unknown>` — pure, tested
-  - `tenantDb(tenantId: string)` — the ONLY sanctioned DB handle for business code. Same API surface as `prisma` but every query on tenant-owned models is filtered/stamped with `tenantId`. Models exempt (scoped via parent or global): `Tenant`, `BundleItem`, `OrderItem`.
+  - `applyTenantScope(model: string, operation: string, args: Record<string, unknown> | undefined, tenantId: string): Record<string, unknown>` â€” pure, tested
+  - `tenantDb(tenantId: string)` â€” the ONLY sanctioned DB handle for business code. Same API surface as `prisma` but every query on tenant-owned models is filtered/stamped with `tenantId`. Models exempt (scoped via parent or global): `Tenant`, `BundleItem`, `OrderItem`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -759,7 +759,7 @@ describe('applyTenantScope', () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test` → Expected: FAIL — cannot resolve `@/lib/tenant-scope`.
+Run: `npm test` â†’ Expected: FAIL â€” cannot resolve `@/lib/tenant-scope`.
 
 - [ ] **Step 3: Implement the pure scoper**
 
@@ -829,8 +829,8 @@ export type TenantDb = ReturnType<typeof tenantDb>
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm test` → Expected: all tenant-scope tests PASS.
-Run: `npx tsc --noEmit` → Expected: no type errors.
+Run: `npm test` â†’ Expected: all tenant-scope tests PASS.
+Run: `npx tsc --noEmit` â†’ Expected: no type errors.
 
 - [ ] **Step 5: Commit**
 
@@ -849,7 +849,7 @@ git commit -m "feat: tenant-scoped Prisma client via query extension"
 
 **Interfaces:**
 - Consumes: `prisma` singleton, schema from Task 2
-- Produces: idempotent seed — a `default` tenant (domains `["localhost"]`, `isDefault: true`, `paymentMode: MANUAL_UPI`) plus 4 sample NOTE products with aliases and 1 BUNDLE. Later phases' manual testing depends on this data existing.
+- Produces: idempotent seed â€” a `default` tenant (domains `["localhost"]`, `isDefault: true`, `paymentMode: MANUAL_UPI`) plus 4 sample NOTE products with aliases and 1 BUNDLE. Later phases' manual testing depends on this data existing.
 
 - [ ] **Step 1: Write the seed**
 
@@ -914,7 +914,7 @@ async function main() {
       tenantId: tenant.id,
       type: 'BUNDLE',
       slug: 'class-10-science-complete-bundle',
-      title: 'Class 10 Science — Complete Bundle',
+      title: 'Class 10 Science â€” Complete Bundle',
       classLevel: 10,
       subject: 'SCIENCE',
       pricePaise: 49900,
@@ -946,14 +946,14 @@ Add to `package.json` (top level, next to `"scripts"`):
 "prisma": { "seed": "tsx prisma/seed.ts" }
 ```
 
-- [ ] **Step 2: Run the seed (twice — idempotency check)**
+- [ ] **Step 2: Run the seed (twice â€” idempotency check)**
 
-Run: `npx prisma db seed` → Expected: `Seeded tenant "default" with 4 notes + 1 bundle`.
-Run it again → Expected: same output, no unique-constraint errors.
+Run: `npx prisma db seed` â†’ Expected: `Seeded tenant "default" with 4 notes + 1 bundle`.
+Run it again â†’ Expected: same output, no unique-constraint errors.
 
 - [ ] **Step 3: Verify data**
 
-Run: `npx prisma studio`, open the `Product` table → Expected: 5 rows (4 notes, 1 bundle), aliases attached. Close studio.
+Run: `npx prisma studio`, open the `Product` table â†’ Expected: 5 rows (4 notes, 1 bundle), aliases attached. Close studio.
 
 - [ ] **Step 4: Commit**
 
@@ -964,7 +964,7 @@ git commit -m "feat: idempotent seed with default tenant and sample catalog"
 
 ---
 
-### Task 7: Supabase Auth — Google sign-in + tenant-scoped user provisioning (TDD on mapping)
+### Task 7: Supabase Auth â€” Google sign-in + tenant-scoped user provisioning (TDD on mapping)
 
 **Files:**
 - Create: `lib/supabase/server.ts`, `lib/supabase/client.ts`, `lib/auth.ts`, `middleware.ts`, `app/auth/callback/route.ts`, `app/auth/error/page.tsx`, `components/auth-buttons.tsx`
@@ -975,9 +975,9 @@ git commit -m "feat: idempotent seed with default tenant and sample catalog"
 - Produces:
   - `createSupabaseServerClient(): Promise<SupabaseClient>` (cookie-bound, for RSC/route handlers)
   - `createSupabaseBrowserClient(): SupabaseClient`
-  - `mapAuthUser(authUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }): { email: string; name: string | null }` — pure, throws on missing email
-  - `ensureUserRecord(tenantId: string, authUser: Parameters<typeof mapAuthUser>[0]): Promise<User>` — upsert by `(tenantId, authId)`
-  - `getSessionUser(): Promise<User | null>` — current tenant + Supabase session → app `User` row (used by every authed page later)
+  - `mapAuthUser(authUser: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }): { email: string; name: string | null }` â€” pure, throws on missing email
+  - `ensureUserRecord(tenantId: string, authUser: Parameters<typeof mapAuthUser>[0]): Promise<User>` â€” upsert by `(tenantId, authId)`
+  - `getSessionUser(): Promise<User | null>` â€” current tenant + Supabase session â†’ app `User` row (used by every authed page later)
 
 - [ ] **Step 1: Install and write failing tests**
 
@@ -1021,7 +1021,7 @@ describe('mapAuthUser', () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test` → Expected: FAIL — cannot resolve `@/lib/auth`.
+Run: `npm test` â†’ Expected: FAIL â€” cannot resolve `@/lib/auth`.
 
 - [ ] **Step 3: Implement auth module and Supabase clients**
 
@@ -1046,7 +1046,7 @@ export async function createSupabaseServerClient() {
               cookieStore.set(name, value, options),
             )
           } catch {
-            // called from a Server Component — middleware refreshes sessions instead
+            // called from a Server Component â€” middleware refreshes sessions instead
           }
         },
       },
@@ -1085,7 +1085,7 @@ type AuthUserLike = {
 
 export function mapAuthUser(authUser: AuthUserLike): { email: string; name: string | null } {
   if (!authUser.email) {
-    throw new Error('Auth user has no email — Google sign-in must provide one')
+    throw new Error('Auth user has no email â€” Google sign-in must provide one')
   }
   const meta = authUser.user_metadata ?? {}
   const name =
@@ -1117,7 +1117,7 @@ export async function getSessionUser(): Promise<User | null> {
 }
 ```
 
-Create `middleware.ts` (repo root — session refresh only, NO Prisma here, it runs on the edge):
+Create `middleware.ts` (repo root â€” session refresh only, NO Prisma here, it runs on the edge):
 
 ```ts
 import { NextResponse, type NextRequest } from 'next/server'
@@ -1229,12 +1229,12 @@ export function SignOutButton() {
 
 - [ ] **Step 4: Run tests and typecheck**
 
-Run: `npm test` → Expected: all tests PASS (auth mapping included).
-Run: `npx tsc --noEmit` → Expected: clean.
+Run: `npm test` â†’ Expected: all tests PASS (auth mapping included).
+Run: `npx tsc --noEmit` â†’ Expected: clean.
 
 - [ ] **Step 5: Manual verification**
 
-Run: `npm run dev`. Visit `http://localhost:3000` — the starter page still renders (sign-in UI is wired into the layout in Task 8, but you can hit the flow directly): temporarily confirm by opening `http://localhost:3000/auth/error` (renders the error page). Full sign-in loop is verified at the end of Task 8.
+Run: `npm run dev`. Visit `http://localhost:3000` â€” the starter page still renders (sign-in UI is wired into the layout in Task 8, but you can hit the flow directly): temporarily confirm by opening `http://localhost:3000/auth/error` (renders the error page). Full sign-in loop is verified at the end of Task 8.
 
 - [ ] **Step 6: Commit**
 
@@ -1255,8 +1255,8 @@ git commit -m "feat: Supabase Google auth with tenant-scoped user provisioning"
 **Interfaces:**
 - Consumes: `getCurrentTenant()`, `getSessionUser()`, `SignInButton`/`SignOutButton`
 - Produces:
-  - `brandingToCssVars(branding: unknown): Record<string, string>` — pure; safe defaults for missing/garbage JSON
-  - `GET /api/health` → `{ ok: true, tenant: string, db: boolean }`
+  - `brandingToCssVars(branding: unknown): Record<string, string>` â€” pure; safe defaults for missing/garbage JSON
+  - `GET /api/health` â†’ `{ ok: true, tenant: string, db: boolean }`
   - Root layout applies tenant CSS vars + header. Phase 2 pages render inside this shell.
 
 - [ ] **Step 1: Write the failing test**
@@ -1290,7 +1290,7 @@ describe('brandingToCssVars', () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm test` → Expected: FAIL — cannot resolve `@/lib/branding`.
+Run: `npm test` â†’ Expected: FAIL â€” cannot resolve `@/lib/branding`.
 
 - [ ] **Step 3: Implement branding, header, health, layout**
 
@@ -1415,7 +1415,7 @@ export default async function HomePage() {
         Handwritten notes that make Class 9 &amp; 10 easy
       </h1>
       <p className="mt-2 text-gray-600">
-        {tenant.name} — full storefront lands in Phase 2.
+        {tenant.name} â€” full storefront lands in Phase 2.
       </p>
     </main>
   )
@@ -1424,15 +1424,15 @@ export default async function HomePage() {
 
 - [ ] **Step 4: Run tests, typecheck, and verify end-to-end**
 
-Run: `npm test` → Expected: all suites PASS.
-Run: `npx tsc --noEmit` → Expected: clean.
+Run: `npm test` â†’ Expected: all suites PASS.
+Run: `npx tsc --noEmit` â†’ Expected: clean.
 Run: `npm run dev`, then:
-1. `http://localhost:3000/api/health` → Expected: `{"ok":true,"tenant":"default","db":true}`.
-2. `http://localhost:3000` → Expected: header shows **Topper Notes Institute** in the brand color, "Sign in with Google" button visible.
-3. Click sign-in, complete Google OAuth → Expected: redirected back, header shows your name.
-4. `npx prisma studio` → `User` table has one row with your email, `role = STUDENT`, correct `tenantId`.
+1. `http://localhost:3000/api/health` â†’ Expected: `{"ok":true,"tenant":"default","db":true}`.
+2. `http://localhost:3000` â†’ Expected: header shows **Topper Notes Institute** in the brand color, "Sign in with Google" button visible.
+3. Click sign-in, complete Google OAuth â†’ Expected: redirected back, header shows your name.
+4. `npx prisma studio` â†’ `User` table has one row with your email, `role = STUDENT`, correct `tenantId`.
 
-- [ ] **Step 5: Commit — Phase 1 complete**
+- [ ] **Step 5: Commit â€” Phase 1 complete**
 
 ```powershell
 git add -A
@@ -1450,3 +1450,4 @@ git commit -m "feat: tenant-branded layout, header with auth state, health endpo
 - Schema migrated including `pg_trgm` + trigram indexes (verify in Supabase SQL editor: `SELECT * FROM pg_extension WHERE extname = 'pg_trgm';` returns one row).
 
 **Next:** write `phase-2-catalog-search` plan (products/bundles admin CRUD, Drive client + preview generation, PLP/PDP, academic search).
+
