@@ -1,7 +1,7 @@
-import { HealthController } from './health.controller'
+import { HealthController } from './health.controller';
 
 describe('HealthController', () => {
   it('reports ok', () => {
-    expect(new HealthController().check()).toEqual({ ok: true })
-  })
-})
+    expect(new HealthController().check()).toEqual({ ok: true });
+  });
+});
