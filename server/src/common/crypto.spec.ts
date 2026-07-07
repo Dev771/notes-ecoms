@@ -1,8 +1,18 @@
 import { decryptSecret, encryptSecret } from './crypto';
 
 describe('secrets crypto', () => {
+  const original = process.env.SECRETS_MASTER_KEY;
+
   beforeEach(() => {
     process.env.SECRETS_MASTER_KEY = 'a'.repeat(64);
+  });
+
+  afterAll(() => {
+    if (original === undefined) {
+      delete process.env.SECRETS_MASTER_KEY;
+    } else {
+      process.env.SECRETS_MASTER_KEY = original;
+    }
   });
 
   it('round-trips a secret', () => {
