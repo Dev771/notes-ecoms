@@ -1,3 +1,4 @@
+import { SignJWT } from 'jose';
 import {
   signAuthToken,
   signState,
@@ -64,6 +65,20 @@ describe('auth tokens', () => {
       nonce: 'n1',
     });
     await expect(verifyAuthToken(state)).rejects.toThrow(/malformed/i);
+  });
+
+  it('rejects a state token signed without a nonce claim', async () => {
+    const token = await new SignJWT({
+      kind: 'state',
+      tenantId: 't1',
+      returnTo: 'http://x.com',
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('10m')
+      .sign(new TextEncoder().encode(process.env.AUTH_JWT_SECRET));
+
+    await expect(verifyState(token)).rejects.toThrow(/malformed/i);
   });
 
   it('throws a clear error when the secret is missing or too short', async () => {

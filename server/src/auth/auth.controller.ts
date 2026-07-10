@@ -75,6 +75,7 @@ export class AuthController {
     res.cookie(OAUTH_NONCE_COOKIE, nonce, {
       httpOnly: true,
       sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 600_000,
       path: '/auth',
     });
