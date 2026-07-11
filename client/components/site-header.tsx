@@ -30,6 +30,9 @@ export function SiteHeader({ tenantName }: { tenantName: string }) {
           {tenantName}
         </Link>
         <nav className="flex items-center gap-3">
+          <Link href="/notes" className="text-sm font-medium text-gray-700">
+            Browse Notes
+          </Link>
           {displayName ? (
             <>
               <span className="text-sm text-gray-600">{displayName}</span>

@@ -50,6 +50,12 @@ type Args = Record<string, unknown>;
  *
  * This is the platform's tenant-isolation mechanism; callers relying on it
  * must keep these blind spots in mind.
+ *
+ * RAW-CLIENT CONSUMERS: `JobsService.processDueJobs`/`run` deliberately query
+ * the raw (non-tenant-scoped) `PrismaService` instead of `forTenant()`, since
+ * the outbox worker is platform infrastructure that must claim due jobs
+ * across all tenants — this is a sanctioned bypass, distinct from the
+ * `EXEMPT_MODELS` mechanism above (`enqueue` still goes through `forTenant()`).
  */
 export function applyTenantScope(
   model: string,

@@ -30,7 +30,7 @@ Two apps in one repo (`client/` + `server/`, plain npm, no workspace tooling —
 |---|---|---|
 | Database | Supabase Postgres + **Prisma** | Free 500MB; `pg_trgm` extension powers fuzzy search |
 | Auth | NestJS Passport Google OAuth + first-party JWTs | API owns the whole flow: `/auth/google` → Google consent → `/auth/google/callback` → user provisioned server-side → signed JWT handed to the client. No auth keys in the browser. Google sign-in stays mandatory (Drive delivery) |
-| File storage | Supabase Storage | Cover images + watermarked previews, auto-generated from the note's own Drive PDF (§4) |
+| File storage | `StorageProvider` interface: local-disk adapter in dev (served at `/media` by the API), Supabase Storage adapter added pre-launch (hosted API filesystems are ephemeral) | Cover images + watermarked previews, auto-generated from the note's own Drive PDF (§4) |
 | Payments | Razorpay (default) behind a thin `PaymentProvider` interface | Checkout in UPI QR/intent mode; per-tenant keys, money settles to the client's account; optional manual-UPI bridge mode (§5) |
 | Email | Resend + React Email | 3k/month free; delivery emails, enquiry notifications, dead-letter alerts |
 | Drive automation | `googleapis` SDK + one platform service account | See §4 |
@@ -45,7 +45,7 @@ No Redis, no queue service, no search service. Reliability comes from a DB-backe
 
 - `tenants` table: name, custom domains, branding JSON (logo, colors, institute copy), **encrypted** Razorpay key id/secret + webhook secret, Drive root folder ID + connection status, support email, status.
 - Every business table carries `tenant_id` with composite indexes.
-- A NestJS middleware resolves every API request's `Origin` header (falling back to `Host`) → tenant (cached 60s) → request context; the storefront fetches its tenant's branding/config from public `GET /tenant/config`. MVP has one tenant row; unknown hosts fall back to the default tenant.
+- A NestJS middleware resolves every API request's tenant from, in priority order: `X-Tenant-Host` header (set only by the storefront's server-side fetches, which forward the browser's real Host — added Phase 2 so SSR renders the right tenant, not the default) → `Origin` → `Host`; cached 60s. SSR fetches use `cache: 'no-store'` because Next's data cache does not key on request headers (a header-keyed cache would leak tenant A's branding to tenant B). The storefront fetches its tenant's branding/config from public `GET /tenant/config`. MVP has one tenant row; unknown hosts fall back to the default tenant. Tenant resolution is routing, not authentication — data isolation comes from tenant-scoped queries and the JWT tenant cross-check.
 - A **Prisma client extension auto-injects `tenant_id`** into every query — isolation is systematic, not remembered per-query. Covered by unit tests.
 - Onboarding tenant #2: insert row, point DNS, share Drive folder with the service account, paste Razorpay keys, verify both from the admin panel. No code, no deployment.
 - Supabase RLS is not used for tenant isolation (Prisma connects with the service role); enforcement lives in the app layer and its tests.
@@ -59,7 +59,7 @@ OAuth ("connect your Google account") was rejected deliberately: permission mana
 
 **Per-purchase grant.** Each note product stores a `drive_file_id`. On payment:
 1. `permissions.create` — buyer email as `reader`, `sendNotificationEmail: false` (we send our own branded email). Returned permission ID stored on the entitlement for one-call revocation.
-2. `copyRequiresWriterPermission: true` is set **once per file at product-creation time** — disables download/print/copy for viewers.
+2. ~~`copyRequiresWriterPermission: true` is set once per file at product-creation time~~ **CORRECTED 2026-07-11 (found by live testing):** on consumer Google Drive this flag is **owner-only** — a service account holding Editor via folder share gets a deterministic 403 trying to set it. The platform therefore *detects and surfaces* copy-protection state (`verify-drive` returns `copyProtection: 'set' | 'owner_action_required'`) and the client-owner toggles "Viewers can't download" themselves. **DECIDED at Phase 3 planning (2026-07-11): owner checklist.** Files stay in the client's Drive; the admin UI surfaces per-file protection state (`copyProtection` badge, shipped in Phase 2); the client-owner toggles "Viewers can't download" on their files (bulk-selectable in Drive's UI). Buyer delivery is unaffected either way — view-only reader grants + watermarked previews apply regardless; the flag only strengthens the download-block. Onboarding docs for each tenant include this as a one-time checklist step.
 
 **Revocation:** refunds or admin override delete the stored permission ID.
 
@@ -92,7 +92,7 @@ Cart → Google sign-in → Razorpay Checkout (per-tenant keys)
   → success page polls order status (webhook may beat the redirect)
 ```
 
-**Outbox reliability:** jobs are attempted inline right after the webhook, then the NestJS worker (`@nestjs/schedule` in-process cron) sweeps every minute retrying failures with backoff. Exhausted jobs dead-letter and surface in the admin panel with a manual retry button. Student dashboard shows "access being prepared" for pending items — a slow grant never looks like a lost payment.
+**Outbox reliability:** jobs are attempted inline right after the webhook, then the NestJS worker (`@nestjs/schedule` in-process cron) sweeps every 30 seconds retrying failures with backoff. (The worker itself ships in Phase 2 — preview generation is its first job type; payment jobs join in Phase 3.) Exhausted jobs dead-letter and surface in the admin panel with a manual retry button. Student dashboard shows "access being prepared" for pending items — a slow grant never looks like a lost payment.
 
 **Edge cases handled:** duplicate webhooks (event-ID dedupe); user closes tab after paying (webhook still fulfills, email still arrives); Drive file deleted/moved by client (job dead-letters, admin alerted, no broken link shown); refund webhook revokes entitlements via stored permission IDs; bundle item already owned (grant skipped, entitlements unique per user+product).
 
@@ -120,7 +120,7 @@ All tables carry `tenant_id`. PKs/timestamps omitted.
 
 Three layers, all Postgres:
 1. **Structured parsing** — extract class ("10", "class 10th"), subject ("sci", "sst" → canonical), chapter number ("ch 4") as hard filters; residual text goes fuzzy.
-2. **Trigram fuzzy match** — `pg_trgm` GIN index over title + aliases; "carbon compunds" still ranks *Carbon and its Compounds* first.
+2. **Trigram fuzzy match** — `pg_trgm` GIN index over title + aliases; "carbon compunds" still ranks *Carbon and its Compounds* first. Implemented as raw SQL (`$queryRaw` with `Prisma.sql`), which bypasses the tenant-scoping extension — the search service therefore includes `tenantId` manually in every query and carries a dedicated isolation test.
 3. **Log every query** to `search_logs`; zero-result queries are the client's content roadmap.
 
 PLP filters (class capsules, subject, price/popularity sort) are plain indexed queries.
@@ -167,3 +167,4 @@ Coupons/affiliate codes, wishlist, ratings/reviews, per-buyer forensic watermark
 | Supabase free-tier pause (7-day inactivity) | Non-issue once live traffic exists; cron pings also keep it warm |
 | Client KYC delays gateway go-live | Manual UPI mode lets the store launch pre-KYC; switch to gateway mode when approved |
 | API free-tier sleep breaks webhooks/cron | Tolerable in dev only (Razorpay retries webhooks); moving the API to an always-on paid tier is a launch-checklist item |
+| Drive download-blocking is owner-gated (found 2026-07-11) | DECIDED: owner-checklist model — platform detects + surfaces per-file state (admin badge); client-owner toggles the flag; grants + watermarks protect regardless |

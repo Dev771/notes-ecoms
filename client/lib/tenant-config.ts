@@ -1,3 +1,5 @@
+import { apiServerFetch } from './api-server';
+
 export type TenantConfig = { slug: string; name: string; branding: unknown };
 
 const FALLBACK: TenantConfig = {
@@ -7,13 +9,8 @@ const FALLBACK: TenantConfig = {
 };
 
 export async function getTenantConfig(): Promise<TenantConfig> {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   try {
-    const res = await fetch(`${base}/tenant/config`, {
-      next: { revalidate: 60 },
-    });
-    if (!res.ok) return FALLBACK;
-    return (await res.json()) as TenantConfig;
+    return await apiServerFetch<TenantConfig>('/tenant/config');
   } catch {
     return FALLBACK;
   }

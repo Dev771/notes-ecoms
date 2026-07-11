@@ -42,4 +42,28 @@ describe('TenantMiddleware', () => {
       NotFoundException,
     );
   });
+
+  it('prefers X-Tenant-Host over Origin and Host', async () => {
+    const { mw, service } = middlewareWith(tenant);
+    const req: Record<string, unknown> = {
+      headers: {
+        'x-tenant-host': 'sharmanotes.in',
+        origin: 'http://localhost:3001',
+        host: 'api.internal:3001',
+      },
+    };
+    await mw.use(req as never, {} as never, jest.fn());
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock reference, never invoked unbound
+    expect(service.resolveByHost).toHaveBeenCalledWith('sharmanotes.in');
+  });
+
+  it('ignores a non-string X-Tenant-Host', async () => {
+    const { mw, service } = middlewareWith(tenant);
+    const req: Record<string, unknown> = {
+      headers: { 'x-tenant-host': ['a.com', 'b.com'], host: 'localhost:3001' },
+    };
+    await mw.use(req as never, {} as never, jest.fn());
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock reference, never invoked unbound
+    expect(service.resolveByHost).toHaveBeenCalledWith('localhost:3001');
+  });
 });
