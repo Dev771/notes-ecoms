@@ -16,6 +16,7 @@ import {
   type VerifyDriveResult,
 } from '@/lib/admin-api';
 import {
+  extractDriveFileId,
   parseList,
   parsePreviewPages,
   rupeesToPaise,
@@ -185,7 +186,10 @@ export function ProductForm({ productId }: ProductFormProps) {
             // unchanged — see UpdateProductBody in lib/admin-api.ts).
             chapterNo:
               chapterNoText.trim() === '' ? null : Number(chapterNoText),
-            driveFileId: driveFileId.trim() === '' ? null : driveFileId.trim(),
+            driveFileId:
+              extractDriveFileId(driveFileId) === ''
+                ? null
+                : extractDriveFileId(driveFileId),
           })
         : await createProduct({
             ...base,
@@ -193,7 +197,9 @@ export function ProductForm({ productId }: ProductFormProps) {
             chapterNo:
               chapterNoText.trim() === '' ? undefined : Number(chapterNoText),
             driveFileId:
-              driveFileId.trim() === '' ? undefined : driveFileId.trim(),
+              extractDriveFileId(driveFileId) === ''
+                ? undefined
+                : extractDriveFileId(driveFileId),
           });
       if (!editId) setCreatedId(savedProduct.id);
     } catch (err) {
@@ -271,6 +277,12 @@ export function ProductForm({ productId }: ProductFormProps) {
       const { items } = await listAdminProducts();
       const fresh = items.find((p) => p.id === productId);
       if (fresh) setPreviewUrls(fresh.previewUrls);
+    } catch (err) {
+      // Refresh races the API during dev restarts — surface it instead of
+      // an unhandled rejection in the console.
+      setGenerateError(
+        err instanceof Error ? err.message : 'Failed to refresh previews',
+      );
     } finally {
       setRefreshing(false);
     }
@@ -431,7 +443,9 @@ export function ProductForm({ productId }: ProductFormProps) {
 
         <div>
           <label className={labelClass} htmlFor="driveFileId">
-            Drive file ID
+            {
+              "Drive PDF file ID — from the file's /file/d/<id>/view URL (not a folder link)"
+            }
           </label>
           <input
             id="driveFileId"

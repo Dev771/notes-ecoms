@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { DriveService } from './drive.service';
 
 function mockDrive() {
@@ -116,6 +120,17 @@ describe('DriveService', () => {
       requestBody: { copyRequiresWriterPermission: true },
       supportsAllDrives: true,
     });
+  });
+
+  it('(g) maps a 400 from the API to BadRequestException naming the file id (e.g. flag PATCH on a folder)', async () => {
+    const drive = mockDrive();
+    drive.files.update.mockRejectedValue(errorWithStatus(400));
+    const service = serviceWith(drive);
+
+    const result = service.setCopyProtection('folder-id');
+
+    await expect(result).rejects.toThrow(BadRequestException);
+    await expect(result).rejects.toThrow('folder-id');
   });
 
   it('(f) re-throws unknown errors untouched', async () => {

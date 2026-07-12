@@ -12,6 +12,7 @@ import {
   Patch,
   Post,
   Put,
+  UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -313,6 +314,20 @@ export class AdminProductsController {
     // Updates nothing on the product itself. Genuine access problems
     // (file missing / not shared with the SA) propagate as 404/403 here.
     const meta = await this.drive.getFileMeta(product.driveFileId);
+    // Type check BEFORE any copy-protection logic: folders (and any other
+    // non-PDF) have metadata too, so getFileMeta succeeding proves nothing
+    // about the id being a usable note file. A pasted /drive/folders/ id
+    // would otherwise reach the flag PATCH below and die as a Google 400.
+    if (meta.mimeType === 'application/vnd.google-apps.folder') {
+      throw new UnprocessableEntityException(
+        'This Drive ID is a FOLDER — open the PDF itself in Drive and copy the ID from its /file/d/<id>/view URL',
+      );
+    }
+    if (meta.mimeType !== 'application/pdf') {
+      throw new UnprocessableEntityException(
+        `Drive file is ${meta.mimeType}, not a PDF — notes must be PDF files`,
+      );
+    }
     // Read-first: the copyProtection signal is derived from the file's
     // ACTUAL state, not from whether our own write succeeded — that is
     // what keeps it truthful after the owner has toggled "Viewers can't

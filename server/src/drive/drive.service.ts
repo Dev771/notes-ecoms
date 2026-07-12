@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -50,6 +51,13 @@ export class DriveService {
     if (status === 403)
       throw new ForbiddenException(
         `Platform service account lacks access to Drive file ${fileId}`,
+      );
+    // Google returns 400 for operations that don't apply to the target —
+    // e.g. PATCHing copyRequiresWriterPermission on a FOLDER id. Surface it
+    // as a client error instead of letting it bubble into a generic 500.
+    if (status === 400)
+      throw new BadRequestException(
+        `Drive rejected the operation on file ${fileId} (invalid operation for this file type)`,
       );
     throw e as Error;
   }

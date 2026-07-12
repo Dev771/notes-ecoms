@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Tenant } from '@prisma/client';
@@ -426,6 +427,63 @@ describe('AdminProductsController', () => {
       name: 'file.pdf',
       copyProtection: 'set',
     });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock reference, never invoked unbound
+    expect(drive.setCopyProtection).not.toHaveBeenCalled();
+  });
+
+  it('product verify-drive: 422s with a folder-specific message when the Drive ID is a folder, and never attempts copy-protection', async () => {
+    const { db, prisma } = mockPrisma();
+    db.product.findUnique.mockResolvedValue(
+      baseProduct({ driveFileId: 'folder-id' }),
+    );
+    const drive = mockDrive();
+    // Real-world case: an admin pastes a folder id from a /drive/folders/
+    // URL. Folders have metadata, so getFileMeta succeeds — the mimeType is
+    // the only tell.
+    (drive.getFileMeta as jest.Mock).mockResolvedValue({
+      id: 'folder-id',
+      name: '10th',
+      mimeType: 'application/vnd.google-apps.folder',
+      copyRequiresWriterPermission: false,
+    });
+    const controller = new AdminProductsController(
+      prisma,
+      drive,
+      mockJobs(),
+      mockStorage(),
+    );
+
+    const result = controller.verifyDrive(TENANT, 'p1');
+
+    await expect(result).rejects.toThrow(UnprocessableEntityException);
+    await expect(result).rejects.toThrow('FOLDER');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock reference, never invoked unbound
+    expect(drive.setCopyProtection).not.toHaveBeenCalled();
+  });
+
+  it('product verify-drive: 422s naming the actual mimeType when the file is not a PDF', async () => {
+    const { db, prisma } = mockPrisma();
+    db.product.findUnique.mockResolvedValue(
+      baseProduct({ driveFileId: 'img1' }),
+    );
+    const drive = mockDrive();
+    (drive.getFileMeta as jest.Mock).mockResolvedValue({
+      id: 'img1',
+      name: 'scan.png',
+      mimeType: 'image/png',
+      copyRequiresWriterPermission: false,
+    });
+    const controller = new AdminProductsController(
+      prisma,
+      drive,
+      mockJobs(),
+      mockStorage(),
+    );
+
+    const result = controller.verifyDrive(TENANT, 'p1');
+
+    await expect(result).rejects.toThrow(UnprocessableEntityException);
+    await expect(result).rejects.toThrow('image/png');
     // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock reference, never invoked unbound
     expect(drive.setCopyProtection).not.toHaveBeenCalled();
   });

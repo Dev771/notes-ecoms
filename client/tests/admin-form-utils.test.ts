@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  extractDriveFileId,
   parseList,
   parsePreviewPages,
   rupeesToPaise,
@@ -85,5 +86,50 @@ describe('rupeesToPaise', () => {
 
   it('maps non-numeric input to 0 rather than NaN', () => {
     expect(rupeesToPaise('abc')).toBe(0);
+  });
+});
+
+describe('extractDriveFileId', () => {
+  it('passes a bare ID through', () => {
+    expect(extractDriveFileId('1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX')).toBe(
+      '1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX',
+    );
+  });
+
+  it('extracts from a full /file/d/ URL with suffix', () => {
+    expect(
+      extractDriveFileId(
+        'https://drive.google.com/file/d/1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX/view?usp=drive_link',
+      ),
+    ).toBe('1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX');
+  });
+
+  it('strips a trailing /view?usp=... from a pasted ID (the bug the user hit)', () => {
+    expect(
+      extractDriveFileId(
+        '1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX/view?usp=drive_link',
+      ),
+    ).toBe('1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX');
+  });
+
+  it('extracts from a folders URL (server then 422s it with a clear message)', () => {
+    expect(
+      extractDriveFileId(
+        'https://drive.google.com/drive/folders/1Xx_ZaVYoJKoYqzrcrqgmbrA_fxPd4av6?usp=sharing',
+      ),
+    ).toBe('1Xx_ZaVYoJKoYqzrcrqgmbrA_fxPd4av6');
+  });
+
+  it('extracts from an ?id= share link', () => {
+    expect(
+      extractDriveFileId(
+        'https://drive.google.com/open?id=1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX',
+      ),
+    ).toBe('1fkzjWho-vVgmMjDoM5VbhhSxEbKal-dX');
+  });
+
+  it('returns empty for blank and passes short garbage through untouched', () => {
+    expect(extractDriveFileId('   ')).toBe('');
+    expect(extractDriveFileId('not-an-id')).toBe('not-an-id');
   });
 });

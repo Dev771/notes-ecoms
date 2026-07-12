@@ -65,3 +65,23 @@ export function rupeesToPaise(rupeesText: string): number {
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100);
 }
+
+/**
+ * Admins paste whatever Drive hands them — a bare ID, a full
+ * /file/d/<id>/view URL, a /folders/<id> link, a ?id= share param, or an ID
+ * with a trailing /view?usp=... — so this extracts the ID token instead of
+ * making humans do surgery. Folder links still normalize to the folder's
+ * ID; the server rejects those with a clear 422 (mimeType check).
+ */
+export function extractDriveFileId(input: string): string {
+  const s = input.trim();
+  if (s === '') return '';
+  const pathMatch = s.match(/\/(?:file\/d|folders)\/([A-Za-z0-9_-]{10,})/);
+  if (pathMatch) return pathMatch[1];
+  const idParam = s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+  if (idParam) return idParam[1];
+  // Bare ID, possibly with trailing junk like /view?usp=drive_link — cut at
+  // the first character that cannot appear in a Drive ID.
+  const bare = s.match(/^([A-Za-z0-9_-]{10,})/);
+  return bare ? bare[1] : s;
+}
